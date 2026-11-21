@@ -1,6 +1,6 @@
 import type { Permission } from '../types';
 
-export type Category = 'Productivity' | 'Development' | 'Automation' | 'Media';
+export type Category = 'AI Models' | 'Productivity' | 'Development' | 'Automation' | 'Media';
 export type ConnectMethod = 'token' | 'webhook' | 'oauth-google';
 export type ToolRisk = 'read' | 'write' | 'critical';
 
@@ -32,9 +32,43 @@ export interface ConnectorDef {
   accent: string;
 }
 
-export const CATEGORIES: Category[] = ['Productivity', 'Development', 'Automation', 'Media'];
+export const CATEGORIES: Category[] = ['AI Models', 'Productivity', 'Development', 'Automation', 'Media'];
 
 export const CONNECTORS: ConnectorDef[] = [
+  {
+    id: 'ai_models',
+    name: 'AI Models (Google + Groq)',
+    category: 'AI Models',
+    description: 'The brains. Google AI Studio powers the specialist agents, Groq powers the lead orchestrator. Both are free; add both for automatic failover.',
+    status: 'active',
+    method: 'token',
+    fields: [
+      { env: 'GEMINI_API_KEY', label: 'Google AI Studio key', secret: true, placeholder: 'AIza...', help: 'aistudio.google.com > Get API key (free, no card).' },
+      { env: 'GROQ_API_KEY', label: 'Groq key', secret: true, placeholder: 'gsk_...', help: 'console.groq.com > API Keys (free).' },
+      { env: 'OPENROUTER_API_KEY', label: 'OpenRouter key (optional)', secret: true, placeholder: 'sk-or-...', help: 'Optional third provider with free models.', optional: true },
+    ],
+    defaultPermission: 'always',
+    tools: [],
+    docsUrl: 'https://aistudio.google.com/apikey',
+    accent: '#7c8cff',
+  },
+  {
+    id: 'image_gen',
+    name: 'Image Generation',
+    category: 'Media',
+    description: 'Free image generators for the Image Studio agent. Cloudflare is the best free option; Hugging Face is a second fallback; Pollinations needs no key.',
+    status: 'active',
+    method: 'token',
+    fields: [
+      { env: 'CLOUDFLARE_ACCOUNT_ID', label: 'Cloudflare Account ID', secret: false, placeholder: '32-character id', help: 'dash.cloudflare.com > Workers AI (the id is in the URL and on the overview page).' },
+      { env: 'CLOUDFLARE_API_TOKEN', label: 'Cloudflare API token', secret: true, placeholder: 'token', help: 'My Profile > API Tokens > Create Token > template "Workers AI".' },
+      { env: 'HF_TOKEN', label: 'Hugging Face token', secret: true, placeholder: 'hf_...', help: 'huggingface.co/settings/tokens (Read, free).', optional: true },
+    ],
+    defaultPermission: 'always',
+    tools: [],
+    docsUrl: 'https://dash.cloudflare.com/profile/api-tokens',
+    accent: '#e879f9',
+  },
   {
     id: 'google_drive',
     name: 'Google Drive',
@@ -201,6 +235,9 @@ const EXTRA_ENV = [
   'GROQ_MODEL',
   'GEMINI_MODEL',
   'OPENROUTER_MODEL',
+  'AGENT_PRIMARY_GEMINI',
+  'AGENT_PRIMARY_GROQ',
+  'POLLINATIONS_TOKEN',
   'GOOGLE_REFRESH_TOKEN',
   'GOOGLE_DRIVE_FOLDER_NAME',
 ];
