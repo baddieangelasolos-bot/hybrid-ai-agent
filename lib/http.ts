@@ -20,3 +20,12 @@ export function requestOrigin(req: Request): string {
   const proto = req.headers.get('x-forwarded-proto') ?? (host.startsWith('localhost') ? 'http' : 'https');
   return proto + '://' + host;
 }
+
+/** Stable public origin of the app (never a per-deployment URL), used for OAuth redirect URIs. */
+export function appOrigin(req: Request): string {
+  const fixed = process.env.APP_URL?.trim().replace(/\/+$/, '');
+  if (fixed && /^https:\/\/[^/\s]+$/.test(fixed)) return fixed;
+  const prod = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
+  if (prod) return 'https://' + prod.replace(/^https?:\/\//, '');
+  return requestOrigin(req);
+}
