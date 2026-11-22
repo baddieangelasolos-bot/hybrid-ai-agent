@@ -1,5 +1,5 @@
 import { isAuthed, safeEqual, signValue } from '@/lib/auth';
-import { errMsg, requestOrigin } from '@/lib/http';
+import { appOrigin, errMsg } from '@/lib/http';
 import { redactSecrets } from '@/lib/security';
 import { triggerRedeploy, upsertEnvVars } from '@/lib/vercel';
 
@@ -7,7 +7,7 @@ export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 function back(req: Request, status: 'ok' | 'error', msg: string): Response {
-  const url = new URL('/', requestOrigin(req));
+  const url = new URL('/', appOrigin(req));
   url.searchParams.set('connector', 'google_drive');
   url.searchParams.set('status', status);
   url.searchParams.set('msg', msg.slice(0, 200));
@@ -24,7 +24,7 @@ function stateValid(state: string): boolean {
 }
 
 export async function GET(req: Request): Promise<Response> {
-  if (!isAuthed(req)) return back(req, 'error', 'Sign in to the app first, then connect again.');
+  if (!isAuthed(req)) return back(req, 'error', 'Sign in at ' + appOrigin(req) + ' first (same address you authorize from), then press Authorize again.');
   const params = new URL(req.url).searchParams;
   const oauthError = params.get('error');
   if (oauthError) return back(req, 'error', 'Google returned: ' + oauthError);
@@ -40,7 +40,7 @@ export async function GET(req: Request): Promise<Response> {
         code,
         client_id: process.env.GOOGLE_CLIENT_ID ?? '',
         client_secret: process.env.GOOGLE_CLIENT_SECRET ?? '',
-        redirect_uri: requestOrigin(req) + '/api/oauth/google/callback',
+        redirect_uri: appOrigin(req) + '/api/oauth/google/callback',
         grant_type: 'authorization_code',
       }).toString(),
       signal: AbortSignal.timeout(15000),

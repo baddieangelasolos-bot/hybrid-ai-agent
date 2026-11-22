@@ -1,7 +1,7 @@
 import { requireAuth } from '@/lib/auth';
 import { driveConfigured } from '@/lib/drive';
 import { knownEnvNames } from '@/lib/connectors/registry';
-import { errMsg, json, requestOrigin } from '@/lib/http';
+import { appOrigin, errMsg, json } from '@/lib/http';
 import { envIsSecret, isAllowedEnvName, maskValue, redactSecrets } from '@/lib/security';
 import { listEnvNames, triggerRedeploy, upsertEnvVars } from '@/lib/vercel';
 
@@ -35,7 +35,7 @@ export async function GET(req: Request): Promise<Response> {
     vercelError,
     canWrite: Boolean(process.env.VERCEL_TOKEN && process.env.VERCEL_PROJECT_ID),
     driveConfigured: driveConfigured(),
-    redirectUri: requestOrigin(req) + '/api/oauth/google/callback',
+    redirectUri: appOrigin(req) + '/api/oauth/google/callback',
   });
 }
 
