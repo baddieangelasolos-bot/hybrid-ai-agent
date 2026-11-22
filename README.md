@@ -1,13 +1,19 @@
 # Hybrid AI Agent
 
-A self-evolving, multi-model AI agent that runs on Vercel's free tier. A fast orchestrator model plans and talks to you, a separate coder model writes code, and tool connectors let the agent read and improve its own GitHub repo, check Vercel builds, search the web and call automation webhooks.
+A private, installable (PWA) multi-agent AI assistant that runs on Vercel's free tier. A fast Groq **Lead Orchestrator** answers directly; specialist agents (Coder, Researcher, Reasoner, Writer, Vision & Docs, Study Tutor, Image Studio, Quick) run on Google Gemini 4 Hydrogen first, each with its own automatic fallback chain across Google, Groq and OpenRouter. Connectors let the agent read and improve its own GitHub repo, check Vercel builds, search the web and call automation webhooks.
+
+**Pages:** Chat, History (search, pin, branches), Agents (fallback chains), Health (free model/quota status), Settings (light/dark, accent, voice, privacy, data, install). Every message has a 3-dot menu: edit, retry (or retry with another model), branch, copy, read aloud, delete. Incognito chats are never saved.
 
 ## What is inside
 
 | Area | What it does |
 | --- | --- |
 | `app/api/chat` | Streams the agent (AI SDK 7 `ToolLoopAgent`, max 8 steps, 300s window) |
-| `lib/failover.ts` | Model chains: Groq `openai/gpt-oss-120b` -> Gemini -> OpenRouter (free) with a retry button |
+| `lib/models.ts`, `lib/agents.ts` | Every model and each agent's ordered fallback chain (edit here to reorder) |
+| `lib/failover.ts` | Quota ledger, first-token timeout, empty-reply detection, per-model thinking level, token-limit aware chain building |
+| `lib/router.ts` | Free instant intent routing: plain chat stays on the Groq orchestrator, tasks go to a specialist |
+| `app/api/health/models` | Zero-token health check (reads provider model lists only) |
+| `app/api/transcribe` | Voice and audio files: Groq Whisper, Gemini fallback |
 | `lib/tools/*` | GitHub (read + approved commits), Vercel (build logs, redeploy), web search/read, webhooks |
 | `lib/security.ts` | Code-level guard: protected files, no auth removal, SSRF-safe webhooks, secret redaction |
 | `lib/storage.ts` + `lib/drive.ts` | Google Drive first, IndexedDB fallback, self-healing sync queue |
@@ -65,3 +71,15 @@ npm install
 cp .env.example .env.local   # fill in values
 npm run dev
 ```
+
+
+## v16 extras
+
+| Name | Required | Notes |
+| --- | --- | --- |
+| `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` | for best free images | Workers AI (FLUX.1 schnell, SDXL Lightning). Free daily allowance. |
+| `HF_TOKEN` | optional | Hugging Face image fallback (free token) |
+| `AGENT_PRIMARY_GEMINI` / `AGENT_PRIMARY_GROQ` | no | Replace the first model of the specialist / orchestrator chains |
+
+Install on a phone: open the site in Chrome, menu > Add to Home screen (iPhone: Share > Add to Home Screen).
+Voice typing uses the browser speech engine by default; switch to Whisper (Groq) in Settings for better Bangla accuracy.
