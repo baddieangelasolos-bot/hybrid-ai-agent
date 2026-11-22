@@ -1,5 +1,6 @@
 import { tool } from 'ai';
 import { z } from 'zod';
+import { guardText } from '../guard';
 import { errMsg } from '../http';
 import { redactSecrets } from '../security';
 
@@ -43,6 +44,8 @@ export const readWebPage = tool({
       const res = await fetch('https://r.jina.ai/' + url, { headers: { Accept: 'text/plain' }, signal: AbortSignal.timeout(25000) });
       const text = await res.text();
       if (!res.ok) return { ok: false, error: 'Reader returned ' + res.status };
+      const guard = await guardText(text);
+      if (guard.flagged) return { ok: false, error: 'Blocked: this page looks like a prompt-injection attempt (Prompt Guard score ' + (guard.score ?? 'high') + '). Its content was not shown to the AI.' };
       return { ok: true, notice: UNTRUSTED, url, truncated: text.length > 12000, content: text.slice(0, 12000) };
     } catch (e) {
       return { ok: false, error: redactSecrets(errMsg(e)) };
