@@ -1,12 +1,12 @@
 'use client';
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { AGENTS, AGENT_ORDER, type AgentId } from '@/lib/agents';
 import { ACCEPT, formatBytes, processFile, type Attachment } from '@/lib/files';
 import { CLIENT_COMMANDS, SKILLS } from '@/lib/skills';
 import { useVoice } from '@/lib/voice';
-import { useApp, useChatActions, useChatCtx } from './AppProviders';
+import { useApp, useChatActions, useChatMeta } from './AppProviders';
 import { Icon } from './Icons';
 
 const PLACEHOLDER: Partial<Record<AgentId, string>> = {
@@ -27,7 +27,7 @@ const MAX_FILES = 4;
 const keepFocus = { onMouseDown: (e: { preventDefault: () => void }) => e.preventDefault() };
 
 export function AgentSheet({ onClose }: { onClose: () => void }) {
-  const { agent } = useChatCtx();
+  const { agent } = useChatMeta();
   const actions = useChatActions();
   return createPortal(
     <div className='fixed inset-0 z-[60] flex items-end justify-center' onClick={onClose}>
@@ -68,9 +68,11 @@ export function AgentSheet({ onClose }: { onClose: () => void }) {
   );
 }
 
-export default function Composer() {
+const DRAFT_KEY = 'hya:draft';
+
+function Composer() {
   const { settings, notify } = useApp();
-  const { busy, agent, incognito, status } = useChatCtx();
+  const { busy, agent, incognito, status, replyTo } = useChatMeta();
   const actions = useChatActions();
   const [input, setInput] = useState('');
   const [files, setFiles] = useState<Attachment[]>([]);
@@ -94,6 +96,37 @@ export default function Composer() {
     ta.style.height = Math.min(ta.scrollHeight, 168) + 'px';
   }, [input]);
 
+  // Restore an unsent draft (survives Chrome killing the tab in the background). Never for incognito.
+  useEffect(() => {
+    try {
+      const d = localStorage.getItem(DRAFT_KEY);
+      if (d && !incognito) setInput(d);
+    } catch {
+      /* storage blocked */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Debounced: typing itself never waits on storage.
+  useEffect(() => {
+    if (incognito) return;
+    const t = window.setTimeout(() => {
+      try {
+        if (input) localStorage.setItem(DRAFT_KEY, input);
+        else localStorage.removeItem(DRAFT_KEY);
+      } catch {
+        /* ignore */
+      }
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [input, incognito]);
+
+  useEffect(() => {
+    const focus = () => window.setTimeout(() => taRef.current?.focus(), 60);
+    window.addEventListener('hya:focus-composer', focus);
+    return () => window.removeEventListener('hya:focus-composer', focus);
+  }, []);
+
   useEffect(() => {
     const onPrefill = (e: Event) => {
       setInput((e as CustomEvent<string>).detail);
@@ -109,7 +142,7 @@ export default function Composer() {
     return [
       ...SKILLS.map((s) => ({ command: s.command, hint: s.hint })),
       ...CLIENT_COMMANDS.map((c) => ({ command: c.command.split(' ')[0], hint: c.hint })),
-    ].filter((c) => c.command.startsWith(q)).slice(0, 6);
+    ].filter((c) => c.command.startsWith(q));
   }, [input]);
 
   async function addFiles(list: FileList | File[] | null) {
@@ -146,6 +179,11 @@ export default function Composer() {
     setInput('');
     setFiles([]);
     voiceBase.current = '';
+    try {
+      localStorage.removeItem(DRAFT_KEY);
+    } catch {
+      /* ignore */
+    }
     await actions.send(text, attached);
   }
 
@@ -156,13 +194,23 @@ export default function Composer() {
     <div className='px-3 pb-2 pt-1' style={{ paddingBottom: 'max(8px, env(safe-area-inset-bottom))' }}>
       <div className='mx-auto w-full max-w-3xl'>
         {slash.length > 0 && (
-          <div className='glass-strong pop-in mb-2 overflow-hidden rounded-2xl' style={{ boxShadow: 'var(--shadow)' }}>
+          <div className='glass-strong pop-in scroll-thin mb-2 max-h-[42dvh] overflow-y-auto rounded-2xl' style={{ boxShadow: 'var(--shadow)' }} role='listbox' aria-label='Commands'>
             {slash.map((c) => (
-              <button key={c.command} className='flex w-full items-baseline gap-3 px-4 py-2.5 text-left hover:bg-[color:var(--hover)]' onClick={() => { setInput(c.command + ' '); taRef.current?.focus(); }}>
+              <button key={c.command} {...keepFocus} className='flex w-full items-baseline gap-3 px-4 py-2.5 text-left hover:bg-[color:var(--hover)]' onClick={() => { setInput(c.command + ' '); taRef.current?.focus(); }}>
                 <span className='font-mono text-sm' style={{ color: 'var(--accent)' }}>{c.command}</span>
                 <span className='truncate text-xs text-[color:var(--muted)]'>{c.hint}</span>
               </button>
             ))}
+          </div>
+        )}
+        {replyTo && (
+          <div className='pop-in mb-2 flex items-start gap-2 rounded-2xl py-2 pl-3 pr-1.5 text-xs' style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderLeft: '3px solid var(--accent)' }}>
+            <span className='mt-0.5 flex-none' style={{ color: 'var(--accent)' }}><Icon name='reply' size={14} /></span>
+            <span className='min-w-0 flex-1'>
+              <span className='block font-medium'>Replying to {replyTo.role === 'user' ? 'your message' : 'Hybrid AI'}</span>
+              <span className='line-clamp-2 break-words text-[color:var(--muted)]'>{replyTo.snippet}</span>
+            </span>
+            <button {...keepFocus} className='icon-btn !h-7 !w-7 flex-none' aria-label='Cancel reply' onClick={() => actions.setReplyTo(null)}><Icon name='x' size={14} /></button>
           </div>
         )}
         {(files.length > 0 || processing > 0) && (
@@ -242,3 +290,6 @@ export default function Composer() {
     </div>
   );
 }
+
+/** Memoised: it re-renders only when light chat state changes, never per streamed token. */
+export default memo(Composer);

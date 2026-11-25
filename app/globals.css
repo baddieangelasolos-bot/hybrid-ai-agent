@@ -144,19 +144,6 @@ pre.code { margin: 0; white-space: pre; overflow: auto; font-family: ui-monospac
 .app-frame { height: 100dvh; display: flex; flex-direction: column; }
 .safe-top { padding-top: env(safe-area-inset-top); }
 .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
-.tabbar {
-  background: color-mix(in srgb, var(--bg-2) 88%, transparent);
-  border-top: 1px solid var(--line);
-  backdrop-filter: blur(22px) saturate(1.4);
-  -webkit-backdrop-filter: blur(22px) saturate(1.4);
-  padding-bottom: env(safe-area-inset-bottom);
-}
-.tab { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 4px 6px; font-size: 0.66rem; color: var(--muted); transition: color 0.15s; flex: 1; min-width: 0; }
-.tab[aria-current='page'] { color: var(--ink); }
-.tab[aria-current='page']::before { content: ''; position: absolute; top: 0; left: 28%; right: 28%; height: 3px; border-radius: 0 0 4px 4px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
-.tab .ico { display: grid; place-items: center; width: 44px; height: 28px; border-radius: 14px; transition: background 0.2s; }
-.tab[aria-current='page'] .ico { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
-
 /* ---------- chat ---------- */
 .bubble-user { background: color-mix(in srgb, var(--accent) 17%, var(--surface)); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); border-radius: 20px 20px 6px 20px; }
 .agent-rail { border-left: 3px solid var(--rail, var(--accent)); padding-left: 12px; }

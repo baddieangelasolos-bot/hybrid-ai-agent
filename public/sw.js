@@ -1,5 +1,5 @@
 /* Hybrid AI Agent service worker: installable app shell, never caches API calls or pages with data. */
-const VERSION = 'hya-v1';
+const VERSION = 'hya-v17';
 const SHELL = ['/offline.html'];
 
 self.addEventListener('install', (e) => {

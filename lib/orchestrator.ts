@@ -14,6 +14,8 @@ export interface PlanInput {
   memory: string[];
   incognito: boolean;
   wantMemoryTool: boolean;
+  /** Pre-sanitised user profile block (empty in incognito). */
+  profile?: string;
 }
 
 export interface AgentPlan {
@@ -33,6 +35,7 @@ export function planAgent(input: PlanInput): AgentPlan {
   const parts = [def.prompt, 'Today is ' + new Date().toISOString().slice(0, 10) + '.', 'Style: ' + getPersonaOverlay(input.persona)];
   if (toolset.activeNames.length > 0) parts.push(SAFETY, 'Tools this turn: ' + toolset.activeNames.join(', ') + '. Use saveMemoryFact only for durable user facts.');
   if (input.skill) parts.push(input.skill.prompt);
+  if (input.profile && !input.incognito) parts.push('About the user (apply silently; do not recite it; the user can override it any time):\n' + input.profile);
   if (input.incognito) parts.push('This is an incognito chat: nothing is saved.');
   else if (input.memory.length > 0) parts.push('Known about the user:\n' + input.memory.map((m) => '- ' + m).join('\n'));
   const instructions = parts.join('\n\n');

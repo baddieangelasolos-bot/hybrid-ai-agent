@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
 import PwaRegister from '@/components/PwaRegister';
 import './globals.css';
+import './perf.css';
 
 export const metadata: Metadata = {
   title: 'Hybrid AI Agent',
@@ -10,7 +11,13 @@ export const metadata: Metadata = {
   manifest: '/manifest.webmanifest',
   applicationName: 'Hybrid AI Agent',
   appleWebApp: { capable: true, title: 'Hybrid AI', statusBarStyle: 'black-translucent' },
-  icons: { icon: '/icons/icon-192.png', apple: '/icons/apple-touch-icon.png' },
+  icons: {
+    icon: [
+      { url: '/icons/logo.svg?v=17', type: 'image/svg+xml' },
+      { url: '/icons/icon-192.png?v=17', sizes: '192x192', type: 'image/png' },
+    ],
+    apple: '/icons/apple-touch-icon.png?v=17',
+  },
   formatDetection: { telephone: false },
 };
 

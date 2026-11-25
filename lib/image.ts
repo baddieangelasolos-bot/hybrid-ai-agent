@@ -22,6 +22,7 @@ export interface ImageOk {
 export interface ImageFail {
   ok: false;
   error: string;
+  unconfigured?: boolean;
 }
 
 const SIZE: Record<Aspect, { width: number; height: number }> = {
@@ -157,10 +158,13 @@ export async function generateImage(prompt: string, aspect: Aspect): Promise<(Im
       attempts.push(p.label + ' ' + p.model + ': ' + redactSecrets(errMsg(e)).slice(0, 140));
     }
   }
-  const hasPaid = imageProviders().some((p) => p.env.length > 0 && p.configured);
+  const keyed = imageProviders().some((p) => p.env.length > 0 && p.configured);
   return {
     ok: false,
-    error: 'No image generator could produce this image. ' + attempts.join(' | ') + (hasPaid ? '' : ' Add CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN (free) for reliable image generation.'),
+    unconfigured: !keyed,
+    error: keyed
+      ? 'Every configured image generator failed: ' + attempts.join(' | ')
+      : 'Image generation is not set up. Only the keyless fallback (Pollinations) is active and it failed' + (attempts.length ? ' (' + attempts.join(' | ') + ')' : '') + '. Add CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN (free, Cloudflare Workers AI) or HF_TOKEN (free, Hugging Face) in Connectors > Image Generation.',
     attempts,
   };
 }

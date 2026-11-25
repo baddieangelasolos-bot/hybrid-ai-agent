@@ -22,6 +22,8 @@ export interface Settings {
   voiceEngine: 'browser' | 'whisper';
   voiceLang: string;
   autoSpeak: boolean;
+  /** Saved fallback order per agent (model keys); empty = built-in order. */
+  chains: Record<string, string[]>;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -40,6 +42,7 @@ export const DEFAULT_SETTINGS: Settings = {
   voiceEngine: 'browser',
   voiceLang: 'en-US',
   autoSpeak: false,
+  chains: {},
 };
 
 export const SETTINGS_KEY = 'hya:settings';

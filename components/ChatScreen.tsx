@@ -2,18 +2,23 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { AGENTS, type AgentId } from '@/lib/agents';
-import { useApp, useChatActions, useChatCtx } from './AppProviders';
+import { titleFrom } from '@/lib/threads';
+import { useApp, useChatActions, useChatMessages, useChatMeta } from './AppProviders';
+import { NavButton } from './AppShell';
 import Composer from './Composer';
 import { Icon } from './Icons';
+import Logo from './Logo';
 import MessageView from './MessageView';
 
 const STARTERS: { agent: AgentId; prompt: string; title: string }[] = [
   { agent: 'auto', title: 'Explain simply', prompt: 'Explain how large language models work, in simple words.' },
   { agent: 'coder', title: 'Build something', prompt: 'Build a responsive pricing page with HTML and CSS.' },
   { agent: 'researcher', title: 'Latest news', prompt: 'What are the latest developments in AI this week?' },
-  { agent: 'study', title: 'Quiz me', prompt: 'Make a 6-question quiz on photosynthesis.' },
+  { agent: 'study', title: 'Quiz me', prompt: 'Make a 10-question HSC MCQ exam on Newtonian mechanics (Physics 1st paper). Tag each question with its topic.' },
+  { agent: 'study', title: 'Board questions', prompt: '/board Give me one creative question (uddipak with ka, kha, ga, gha) on HSC Chemistry: Qualitative chemistry, then a model answer.' },
   { agent: 'image', title: 'Make an image', prompt: 'Generate a neon-lit rainy city street at night, cinematic.' },
   { agent: 'reasoner', title: 'Solve a problem', prompt: 'Solve step by step: a train leaves at 3pm going 80 km/h, another at 4pm going 100 km/h. When does the second catch up?' },
+  { agent: 'selfmod', title: 'Improve this app', prompt: 'List the files of this app and suggest one small, safe improvement. Do not push anything yet.' },
 ];
 
 function niceError(e: Error): string {
@@ -28,7 +33,8 @@ function niceError(e: Error): string {
 
 export default function ChatScreen() {
   const { settings } = useApp();
-  const { messages, busy, status, error, route, incognito, agent, threadId } = useChatCtx();
+  const messages = useChatMessages();
+  const { busy, status, error, route, incognito, agent, threadId, threads, interrupted } = useChatMeta();
   const actions = useChatActions();
   const scRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -42,34 +48,47 @@ export default function ChatScreen() {
     setAtBottom(near);
   }, []);
 
+  const raf = useRef(0);
   useLayoutEffect(() => {
     const el = scRef.current;
-    if (el && stick.current && messages.length > 0) el.scrollTop = el.scrollHeight;
-    if (el && messages.length === 0) el.scrollTop = 0;
+    if (!el) return;
+    if (messages.length === 0) {
+      el.scrollTop = 0;
+      return;
+    }
+    if (!stick.current) return;
+    // Streaming updates many times a second: write the scroll position once per frame, not once per update.
+    cancelAnimationFrame(raf.current);
+    raf.current = requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight;
+    });
   }, [messages, status, error]);
+  useEffect(() => () => cancelAnimationFrame(raf.current), []);
 
+  const count = useRef(0);
+  count.current = messages.length;
   useEffect(() => {
     stick.current = true;
     const el = scRef.current;
-    if (el) requestAnimationFrame(() => (el.scrollTop = el.scrollHeight));
+    // Only jump to the bottom for a chat that has messages; an empty chat shows its hero from the top.
+    if (el) requestAnimationFrame(() => (el.scrollTop = count.current > 0 ? el.scrollHeight : 0));
   }, [threadId]);
 
   const last = messages[messages.length - 1];
   const waiting = busy && (!last || last.role === 'user' || last.parts.length === 0);
   const a = AGENTS[agent];
+  const saved = threads.find((t) => t.id === threadId);
+  const title = incognito ? 'Incognito chat' : saved?.title ?? (messages.length > 0 ? titleFrom(messages) : 'New chat');
+  const status2 = busy && route ? route.name + (route.reason ? ' · ' + route.reason : '') : agent === 'auto' ? 'Auto · Lead Orchestrator' : a.name;
 
   return (
     <div className='flex h-full flex-col'>
       <header className='safe-top flex-none px-3 pb-2 pt-3' style={{ background: 'linear-gradient(var(--bg) 60%, transparent)' }}>
-        <div className='mx-auto flex w-full max-w-3xl items-center gap-2'>
-          <div className='grid h-10 w-10 flex-none place-items-center rounded-2xl text-white' style={{ background: incognito ? 'linear-gradient(135deg,#475569,#1e293b)' : 'linear-gradient(135deg, var(--accent), var(--accent-2))' }}>
-            <Icon name={incognito ? 'ghost' : 'spark'} size={20} />
-          </div>
-          <div className='min-w-0 flex-1'>
-            <div className='truncate text-[17px] font-semibold leading-tight'>{incognito ? 'Incognito chat' : 'Hybrid AI'}</div>
-            <div className='truncate text-xs text-[color:var(--muted)]'>
-              {busy && route ? route.name + (route.reason ? ' · ' + route.reason : '') : agent === 'auto' ? 'Auto · Lead Orchestrator' : a.name}
-            </div>
+        <div className='mx-auto flex w-full max-w-3xl items-center gap-1.5'>
+          <NavButton />
+          <div className='min-w-0 flex-1 px-1'>
+            <div className='truncate text-[17px] font-semibold leading-tight' title={title}>{title}</div>
+            <div className='truncate text-xs text-[color:var(--muted)]'>Hybrid AI · {status2}</div>
           </div>
           <button className={'icon-btn ' + (incognito ? '!bg-[color:var(--hover)] !text-[color:var(--ink)]' : '')} aria-label={incognito ? 'Leave incognito' : 'Start incognito chat'} onClick={() => actions.newChat({ incognito: !incognito })}>
             <Icon name='ghost' size={20} />
@@ -89,12 +108,16 @@ export default function ChatScreen() {
       )}
 
       <div ref={scRef} onScroll={onScroll} className='scroll-thin relative min-h-0 flex-1 overflow-y-auto overscroll-contain px-3'>
-        <div className='mx-auto flex w-full max-w-3xl flex-col gap-5 pb-4 pt-2'>
+        <div className='msg-list mx-auto flex w-full max-w-3xl flex-col gap-5 pb-4 pt-2'>
           {messages.length === 0 && (
             <div className='fade-up flex flex-col items-center pt-8 text-center'>
-              <div className='grid h-16 w-16 place-items-center rounded-3xl text-white' style={{ background: 'linear-gradient(135deg, var(--accent), var(--accent-2))', boxShadow: '0 14px 40px color-mix(in srgb, var(--accent) 40%, transparent)' }}>
-                <Icon name={incognito ? 'ghost' : 'spark'} size={30} />
-              </div>
+              {incognito ? (
+                <div className='grid h-16 w-16 place-items-center rounded-3xl text-white' style={{ background: 'linear-gradient(135deg,#475569,#1e293b)' }}>
+                  <Icon name='ghost' size={30} />
+                </div>
+              ) : (
+                <Logo size={72} />
+              )}
               <h2 className='mt-5 text-2xl font-semibold tracking-tight'>{incognito ? 'Private chat' : 'How can I help?'}</h2>
               <p className='mt-1 max-w-sm text-sm text-[color:var(--muted)]'>Ask anything. Simple questions get an instant answer; bigger jobs go to the right specialist.</p>
               <div className='mt-7 grid w-full grid-cols-2 gap-2.5'>
@@ -128,6 +151,19 @@ export default function ChatScreen() {
               <div className='flex items-center gap-2 py-1 text-xs text-[color:var(--muted)]'>
                 <span className='dot' /><span className='dot' /><span className='dot' />
                 {settings.showRoute && route && <span>{route.name} · {route.node.replace(/^(Gemini|Groq|OpenRouter) \/ /, '')}</span>}
+              </div>
+            </div>
+          )}
+
+          {interrupted && !busy && (
+            <div className='card fade-up p-4' style={{ borderColor: 'color-mix(in srgb, var(--warn) 50%, transparent)' }} role='status'>
+              <div className='flex items-start gap-2 text-sm'>
+                <span style={{ color: 'var(--warn)' }}><Icon name='alert' size={18} /></span>
+                <p className='min-w-0'>Interrupted while the app was in the background. Continue replaces the unfinished reply; your message is not sent twice.</p>
+              </div>
+              <div className='mt-3 flex flex-wrap gap-2'>
+                <button className='neon-btn rounded-lg px-3.5 py-2 text-sm' onClick={() => actions.resume()}>Continue</button>
+                <button className='ghost-btn rounded-lg px-3.5 py-2 text-sm' onClick={() => actions.dismissInterrupt()}>Dismiss</button>
               </div>
             </div>
           )}

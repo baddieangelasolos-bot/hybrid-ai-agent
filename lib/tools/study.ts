@@ -2,7 +2,7 @@ import { tool } from 'ai';
 import { z } from 'zod';
 
 export const makeQuiz = tool({
-  description: 'Show an interactive multiple-choice quiz to the learner. Use 5-10 varied questions with one correct option each and a short explanation.',
+  description: 'Show an interactive multiple-choice quiz to the learner. Use 5-20 varied questions per call with one correct option each, a short explanation and a short topic tag.',
   inputSchema: z.object({
     title: z.string().min(2).max(100),
     questions: z
@@ -12,10 +12,11 @@ export const makeQuiz = tool({
           options: z.array(z.string().min(1).max(200)).min(2).max(5),
           answerIndex: z.number().int().min(0).max(4),
           explanation: z.string().max(500).default(''),
+          topic: z.string().max(80).optional(),
         }),
       )
       .min(3)
-      .max(12),
+      .max(25),
   }),
   execute: async (quiz) => ({ kind: 'quiz' as const, ...quiz }),
   toModelOutput: ({ output }) => ({ type: 'text', value: 'The quiz "' + (output as { title: string }).title + '" is now shown to the user. Do not repeat the questions.' }),

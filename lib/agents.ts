@@ -1,6 +1,7 @@
 import type { IconName } from '@/components/Icons';
+import { MODEL_BY_KEY } from './models';
 
-export type AgentId = 'auto' | 'coder' | 'researcher' | 'reasoner' | 'writer' | 'vision' | 'study' | 'image' | 'quick';
+export type AgentId = 'auto' | 'coder' | 'selfmod' | 'researcher' | 'reasoner' | 'writer' | 'vision' | 'study' | 'image' | 'quick';
 export type Effort = 'minimal' | 'low' | 'medium' | 'high';
 export type ToolGroup = 'repo' | 'web' | 'image' | 'study' | 'workspace';
 
@@ -71,6 +72,21 @@ export const AGENTS: Record<AgentId, AgentDef> = {
       BASE +
       ' You are the Coder agent, a senior engineer. Inspect existing files with readRepoFile before editing. Return COMPLETE files (no placeholders) through renderMultiFileWorkspace, never touch protected files (auth, security, settings, oauth, .github), and put requireAuth(req) at the top of every API route. Only call pushToGitHubRepo after the user approves the code. After a push, check the build with checkVercelDeployment and fix at most 2 rounds. Never retry a call the user denied.',
   },
+  selfmod: {
+    id: 'selfmod',
+    name: 'Self-Modifier',
+    tagline: 'Proposes changes to this app\'s own code. Nothing is pushed without your Approve.',
+    hue: '#fb7185',
+    icon: 'shield',
+    chain: [G.H, G.F38, G.GM31, Q.OSS120, G.F36, Q.QWEN, G.F3P, G.GM26, Q.OSS20, OR],
+    effort: 'medium',
+    ttftMs: 45000,
+    maxSteps: 8,
+    tools: ['repo', 'workspace'],
+    prompt:
+      BASE +
+      ' You are the Self-Modifier agent for THIS app (the hybrid-ai-agent repository). Workflow: 1) read the relevant files with readRepoFile, 2) explain the plan in 3-6 lines, 3) show COMPLETE changed files with renderMultiFileWorkspace, 4) call pushToGitHubRepo ONCE with all files so the user sees an Approve / Deny pop-up. Hard rules: never delete a repository or branch, never touch .github or any protected file (auth, security, settings, oauth), never remove authentication, every new API route must call requireAuth(req), keep the app on free tiers. Never retry a denied push. After an approved push, call checkVercelDeployment and fix at most 2 rounds. Do not push again within 3 minutes of a push (it would cause rebuild loops).',
+  },
   researcher: {
     id: 'researcher',
     name: 'Researcher',
@@ -138,7 +154,7 @@ export const AGENTS: Record<AgentId, AgentDef> = {
     tools: ['study'],
     prompt:
       BASE +
-      ' You are the Study Tutor. Teach in small steps: explain simply with one concrete example, then check understanding with a question. When the user wants practice call makeQuiz; for memorising call makeFlashcards (after the tool returns, add one short encouraging line, do not repeat the questions). If the user attached notes or a PDF, base the material on them. Adapt difficulty to the learner.',
+      ' You are the Study Tutor. Teach in small steps: explain simply with one concrete example, then check understanding with a question. The learner is a Bangladeshi student unless the profile says otherwise: HSC means the Bangladesh HSC (NCTB books, Dhaka and other boards), SSC likewise. When the user wants an MCQ quiz call makeQuiz with at most 20 questions per call (for 40 questions call it twice, Part 1 and Part 2), four options each, one correct answer, a short explanation and a short topic tag per question; write Bangla questions in Bangla when the user writes Bangla. For memorising call makeFlashcards. After a tool returns add one short line only and never repeat the questions. If the user types answers (like 1-B 2-D or ক খ গ), grade them against the quiz in the conversation: score and percentage, the answer key, every missed question with Your Answer, Correct Answer and a clear Explanation, the weak topics, and offer (a) retry only the missed questions, (b) more questions, (c) a focused test on weak topics. Board question practice (CQ, short and essay questions): give structured model answers, pair each uddipak (stem/passage) with its sub-questions (knowledge, comprehension, application, higher-order), and NEVER invent board names, years or exam sources: label any board/year detail you cannot verify as unverified, or leave it out. If the user attached notes or a PDF, base the material on them. Adapt difficulty to the learner.',
   },
   image: {
     id: 'image',
@@ -153,7 +169,7 @@ export const AGENTS: Record<AgentId, AgentDef> = {
     tools: ['image'],
     prompt:
       BASE +
-      ' You are the Image Studio agent. Turn the request into one rich English image prompt (subject, style, lighting, composition, mood) and call generateImage. Do not describe the picture before it exists. After the tool returns, reply with one short sentence and offer a variation.',
+      ' You are the Image Studio agent. Turn the request into one rich English image prompt (subject, style, lighting, composition, mood) and call generateImage. Do not describe the picture before it exists. If generateImage fails, tell the user the exact reason from the tool result and what key to add (never claim a vague temporary outage). After success, reply with one short sentence and offer a variation.',
   },
   quick: {
     id: 'quick',
@@ -170,8 +186,16 @@ export const AGENTS: Record<AgentId, AgentDef> = {
   },
 };
 
-export const AGENT_ORDER: AgentId[] = ['auto', 'coder', 'researcher', 'reasoner', 'writer', 'vision', 'study', 'image', 'quick'];
+export const AGENT_ORDER: AgentId[] = ['auto', 'coder', 'selfmod', 'researcher', 'reasoner', 'writer', 'vision', 'study', 'image', 'quick'];
 
 export function normalizeAgent(value: unknown): AgentId {
   return typeof value === 'string' && value in AGENTS ? (value as AgentId) : 'auto';
+}
+
+/** Fallback order for one agent, honouring a user-saved override (invalid keys are ignored, missing ones appended). */
+export function effectiveChain(id: AgentId, override?: string[] | null): string[] {
+  const base = AGENTS[id].chain;
+  if (!override || override.length === 0) return base;
+  const head = override.filter((k, i) => MODEL_BY_KEY[k] && override.indexOf(k) === i);
+  return [...head, ...base.filter((k) => !head.includes(k))];
 }

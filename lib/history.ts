@@ -54,6 +54,15 @@ export function prepareHistory(messages: UIMessage[], opts: HistoryOptions): UIM
     const parts: Part[] = [];
     for (const p of partsOf(m)) {
       if (p.type === 'reasoning' || p.type === 'step-start' || p.type.startsWith('data-')) continue;
+      if ((p.type === 'tool-makeQuiz' || p.type === 'tool-makeFlashcards') && p.output && typeof p.output === 'object') {
+        // Keep quizzes in the conversation as compact text so typed answers can be graded and "more questions" avoids repeats.
+        const o = p.output as { title?: string; questions?: { question: string; options: string[]; answerIndex: number; topic?: string }[]; cards?: { front: string; back: string }[] };
+        const body = o.questions
+          ? o.questions.map((q, n) => (n + 1) + '. ' + q.question + ' ' + q.options.map((x, k) => String.fromCharCode(65 + k) + ') ' + x).join(' ') + ' [answer ' + String.fromCharCode(65 + q.answerIndex) + (q.topic ? ', topic ' + q.topic : '') + ']').join('\n')
+          : (o.cards ?? []).map((c) => c.front + ' = ' + c.back).join('\n');
+        parts.push({ type: 'text', text: '[Shown to the learner as an interactive ' + (o.questions ? 'quiz' : 'flashcard deck') + ' "' + (o.title ?? '') + '"; only you can see the answer key]\n' + body.slice(0, 5000) });
+        continue;
+      }
       if (p.type.startsWith('tool-') || p.type === 'dynamic-tool') {
         if (keepToolState) parts.push(p);
         continue;

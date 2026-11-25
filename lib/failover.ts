@@ -2,7 +2,7 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createGroq } from '@ai-sdk/groq';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { LanguageModel } from 'ai';
-import { AGENTS, type AgentId, type Effort } from './agents';
+import { AGENTS, effectiveChain, type AgentId, type Effort } from './agents';
 import { catalogHas, kickCatalogRefresh } from './catalog';
 import { MODEL_BY_KEY, providerConfigured, type ModelDef } from './models';
 import { redactSecrets } from './security';
@@ -263,6 +263,8 @@ export interface ChainRequest {
   estTokens?: number;
   /** "Try another model": skip this many healthy models at the front. */
   rotation?: number;
+  /** User-saved fallback order for this agent (model keys). */
+  order?: string[];
 }
 
 export interface Chain {
@@ -272,9 +274,9 @@ export interface Chain {
 
 export function getChain(req: ChainRequest): Chain {
   kickCatalogRefresh();
-  const agent = AGENTS[req.agent];
+  void AGENTS[req.agent];
   const skipped: Chain['skipped'] = [];
-  const keys = [...agent.chain];
+  const keys = [...effectiveChain(req.agent, req.order)];
   const primaryGemini = process.env.AGENT_PRIMARY_GEMINI?.trim();
   const primaryGroq = process.env.AGENT_PRIMARY_GROQ?.trim();
   const override = req.agent === 'auto' ? primaryGroq && 'groq:' + primaryGroq : primaryGemini && 'gemini:' + primaryGemini;
@@ -423,6 +425,81 @@ export function createFailoverModel(nodes: ModelNode[], opts: FailoverOptions): 
   if (nodes.length === 0) throw new Error('No AI model is configured for this request.');
   const models = nodes.map((n) => n.create() as unknown as AnyModel);
 
+  const buildOptions = (node: ModelNode, options: Record<string, unknown>): Record<string, unknown> => {
+    const eff = effortOptions(node.def, opts.effort);
+    const base = (options.providerOptions ?? {}) as Record<string, Record<string, unknown>>;
+    const providerOptions = eff ? { ...base, ...Object.fromEntries(Object.entries(eff).map(([k, v]) => [k, { ...(base[k] ?? {}), ...v }])) } : base;
+    const cap = options.maxOutputTokens as number | undefined;
+    return { ...options, providerOptions, maxOutputTokens: Math.min(cap ?? node.def.maxOut, node.def.maxOut) };
+  };
+
+  /**
+   * If a model fails AFTER it already started a plain-text answer (for example "provider overloaded"
+   * halfway through 40 quiz questions), the next healthy model continues exactly where it stopped,
+   * so the user sees one unbroken answer instead of an error card.
+   */
+  const guardStream = (first: { stream: ReadableStream<StreamPart> } & Record<string, unknown>, startIdx: number, options: Record<string, unknown>) => {
+    const outer = options.abortSignal as AbortSignal | undefined;
+    let text = '';
+    let textId = 'text-0';
+    let sawTool = false;
+    let current = startIdx;
+    let continued = false;
+    let reader = first.stream.getReader();
+    const stream = new ReadableStream<StreamPart>({
+      async pull(controller) {
+        for (;;) {
+          let part: StreamPart;
+          try {
+            const r = await reader.read();
+            if (r.done) {
+              controller.close();
+              return;
+            }
+            part = r.value;
+          } catch (e) {
+            part = { type: 'error', error: e };
+          }
+          const type = String(part.type);
+          if (type === 'error' && text.length > 0 && !sawTool && !outer?.aborted) {
+            markFailure(nodes[current].key, classifyModelError(part.error));
+            let resumed = false;
+            for (let j = current + 1; j < models.length && !resumed; j++) {
+              if (cooldownRemaining(nodes[j].key) > 0) continue;
+              try {
+                const prompt = [
+                  ...((options.prompt as unknown[]) ?? []),
+                  { role: 'assistant', content: [{ type: 'text', text }] },
+                  { role: 'user', content: [{ type: 'text', text: 'Continue your previous answer exactly where it stopped. Do not repeat or summarize anything you already wrote.' }] },
+                ];
+                const next = await openStream(models[j], { ...buildOptions(nodes[j], options), prompt }, opts.ttftMs, outer);
+                reader = next.stream.getReader();
+                current = j;
+                continued = true;
+                opts.onModel?.(nodes[j]);
+                resumed = true;
+              } catch (e2) {
+                markFailure(nodes[j].key, classifyModelError(e2));
+              }
+            }
+            if (resumed) continue;
+          }
+          if (continued && (type === 'stream-start' || type === 'response-metadata' || type === 'text-start')) continue;
+          if (type === 'text-start') textId = String(part.id ?? textId);
+          if (type === 'text-delta') text += String(part.delta ?? part.textDelta ?? '');
+          if (type === 'tool-input-start' || type === 'tool-call') sawTool = true;
+          if (continued && (type === 'text-delta' || type === 'text-end')) part = { ...part, id: textId };
+          controller.enqueue(part);
+          return;
+        }
+      },
+      cancel(reason) {
+        return reader.cancel(reason);
+      },
+    });
+    return { ...first, stream };
+  };
+
   const run = async (method: 'doStream' | 'doGenerate', options: Record<string, unknown>): Promise<unknown> => {
     const failures: string[] = [];
     const outer = options.abortSignal as AbortSignal | undefined;
@@ -441,7 +518,7 @@ export function createFailoverModel(nodes: ModelNode[], opts: FailoverOptions): 
           const callOptions = merge(attempt === 0);
           let result: unknown;
           if (method === 'doStream') {
-            result = await openStream(models[i], callOptions, opts.ttftMs, outer);
+            result = guardStream(await openStream(models[i], callOptions, opts.ttftMs, outer), i, options);
           } else {
             const limit = AbortSignal.timeout(Math.max(opts.ttftMs, 60000));
             result = await models[i].doGenerate({ ...callOptions, abortSignal: outer ? AbortSignal.any([outer, limit]) : limit });

@@ -22,12 +22,17 @@ export const SKILLS: AgentSkill[] = [
   { id: 'image', command: '/image', label: 'Image', hint: 'Generate an image', agent: 'image', prompt: 'Skill IMAGE: call generateImage with a rich prompt built from the request.' },
   { id: 'study', command: '/study', label: 'Study', hint: 'Learn a topic with a tutor', agent: 'study', prompt: 'Skill STUDY: teach the topic in small steps and check understanding.' },
   { id: 'quiz', command: '/quiz', label: 'Quiz', hint: 'Make a quiz on any topic or notes', agent: 'study', prompt: 'Skill QUIZ: call makeQuiz with 6-8 varied questions, each with a short explanation.' },
+  { id: 'board', command: '/board', label: 'Board questions', hint: 'CQ, short and essay board-question practice', agent: 'study', prompt: 'Skill BOARD: structured model answers for board-style questions (uddipak + sub-questions). Never invent board or year sources; mark unverified details.' },
+  { id: 'selfmod', command: '/selfmod', label: 'Self-modify', hint: 'Change this app\'s own code (asks Approve / Deny)', agent: 'selfmod', prompt: 'Skill SELFMOD: follow the Self-Modifier workflow. The push shows an Approve / Deny pop-up.' },
   { id: 'fast', command: '/fast', label: 'Fast', hint: 'Instant short answer', agent: 'quick', prompt: 'Skill FAST: answer in one to three sentences.' },
 ];
 
 export const CLIENT_COMMANDS: { command: string; hint: string }[] = [
   { command: '/env NAME=value', hint: 'Save an environment variable straight to Vercel (never sent to any AI model)' },
   { command: '/memory', hint: 'Show saved memory facts' },
+  { command: '/last', hint: 'Switch to your previous chat' },
+  { command: '/primary <model> [agent]', hint: 'Make a model #1 in an agent\'s fallback order' },
+  { command: '/profile', hint: 'Open your profile and learned preferences' },
   { command: '/incognito', hint: 'Start a private chat that is not saved' },
   { command: '/clear', hint: 'Start a new chat' },
 ];

@@ -1,0 +1,20 @@
+/* Performance layer (loaded after globals.css). Android Chrome paints much faster without these effects. */
+
+/* A fixed background re-paints the whole page on every scroll frame on mobile. */
+body { background-attachment: scroll; }
+
+/* Live blur is expensive; the surfaces are already 82-94% opaque so the look barely changes. */
+.glass { background: color-mix(in srgb, var(--surface) 94%, transparent); backdrop-filter: none; -webkit-backdrop-filter: none; }
+.glass-strong { background: color-mix(in srgb, var(--surface) 97%, transparent); backdrop-filter: none; -webkit-backdrop-filter: none; }
+/* Keep blur only where a sheet floats over the page. */
+.sheet-in.glass-strong, .drawer-in.glass-strong { backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+
+/* Streaming text should not trigger layout of the whole page. */
+.msg-list { contain: layout style; }
+.scroll-thin { -webkit-overflow-scrolling: touch; }
+
+/* Left navigation drawer */
+@keyframes drawer { from { transform: translateX(-100%); } to { transform: none; } }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+.drawer-in { animation: drawer 0.24s cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
+.backdrop-in { animation: fadeIn 0.2s ease backwards; }

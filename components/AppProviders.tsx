@@ -2,18 +2,22 @@
 
 import { Chat, useChat } from '@ai-sdk/react';
 import { DefaultChatTransport, lastAssistantMessageIsCompleteWithApprovalResponses, type UIMessage } from 'ai';
+import { useRouter } from 'next/navigation';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { AGENTS, type AgentId } from '@/lib/agents';
+import { AGENTS, effectiveChain, type AgentId } from '@/lib/agents';
 import { apiRequest } from '@/lib/api';
-import { fileTextPart, parseFileMark, type Attachment } from '@/lib/files';
-import { addFact, deleteFact, factsForPrompt, loadFacts } from '@/lib/memory';
+import { parseCommand, type ChatCommand } from '@/lib/commands';
+import { fileTextPart, isMarkerText, replyTextPart, type Attachment } from '@/lib/files';
+import { MODEL_BY_KEY } from '@/lib/models';
+import { addFact, deleteFact, factsForPrompt, loadFacts, updateFact } from '@/lib/memory';
+import { DEFAULT_PROFILE, PROFILE_KEY, PROFILE_LOCAL_KEY, learnFromMessage, type UserProfile } from '@/lib/profile';
 import { DEFAULT_SETTINGS, SETTINGS_STORE_KEY, applyTheme, haptic, loadCooldowns, loadSettingsLocal, mergeServerLedger, saveSettingsLocal, type Settings } from '@/lib/settings';
 import { storage } from '@/lib/storage';
 import { THREAD_INDEX_KEY, compactForSave, listThreads, loadThread, newId, previewFrom, threadKey, titleFrom, type ThreadMeta } from '@/lib/threads';
 import type { MemoryFact, Permission } from '@/lib/types';
 import { speak } from '@/lib/voice';
 import ConnectorsDrawer from './ConnectorsDrawer';
-import { Icon } from './Icons';
+import Logo from './Logo';
 
 /* -------------------------------------------------------------------------- */
 /*                                 app context                                */
@@ -33,6 +37,11 @@ export interface AppCtx {
   permissions: Record<string, Permission>;
   facts: MemoryFact[];
   removeFact: (id: string) => Promise<void>;
+  addFactManual: (text: string) => Promise<void>;
+  editFact: (id: string, text: string) => Promise<void>;
+  profile: UserProfile;
+  setProfile: (p: UserProfile) => void;
+  resetProfile: () => void;
   logout: () => Promise<void>;
 }
 
@@ -54,8 +63,14 @@ export interface RouteInfo {
   node: string;
 }
 
-export interface ChatCtx {
-  messages: UIMessage[];
+export interface ReplyTarget {
+  id: string;
+  role: 'user' | 'assistant';
+  snippet: string;
+}
+
+/** Everything that does NOT change while tokens stream. Composer, header and pages use only this. */
+export interface ChatMeta {
   status: 'submitted' | 'streaming' | 'ready' | 'error';
   error: Error | undefined;
   busy: boolean;
@@ -63,9 +78,17 @@ export interface ChatCtx {
   threadId: string;
   incognito: boolean;
   agent: AgentId;
-  setAgent: (a: AgentId) => void;
   threads: ThreadMeta[];
-  send: (text: string, attachments?: Attachment[]) => Promise<void>;
+  replyTo: ReplyTarget | null;
+  interrupted: boolean;
+}
+
+export interface ChatMessagesCtx {
+  messages: UIMessage[];
+}
+
+export interface ChatActions {
+  send: (text: string, attachments?: Attachment[], opts?: { agent?: AgentId }) => Promise<void>;
   edit: (messageId: string, text: string) => Promise<void>;
   retry: (messageId?: string, another?: boolean) => void;
   branch: (messageId: string) => Promise<void>;
@@ -80,23 +103,36 @@ export interface ChatCtx {
   pinThread: (id: string) => Promise<void>;
   deleteAllThreads: () => Promise<void>;
   exportAll: () => Promise<string>;
+  setAgent: (a: AgentId) => void;
+  setReplyTo: (r: ReplyTarget | null) => void;
+  resume: () => void;
+  dismissInterrupt: () => void;
 }
 
-const ChatContext = createContext<ChatCtx | null>(null);
-
-export type ChatActions = Pick<ChatCtx, 'send' | 'edit' | 'retry' | 'branch' | 'remove' | 'stop' | 'clearError' | 'decide' | 'newChat' | 'openThread' | 'deleteThread' | 'renameThread' | 'pinThread' | 'deleteAllThreads' | 'exportAll' | 'setAgent'>;
+const MetaContext = createContext<ChatMeta | null>(null);
+const MessagesContext = createContext<ChatMessagesCtx | null>(null);
 const ActionsContext = createContext<ChatActions | null>(null);
+
 /** Stable identity across streaming updates, so finished messages never re-render. */
 export function useChatActions(): ChatActions {
   const v = useContext(ActionsContext);
   if (!v) throw new Error('useChatActions must be used inside AppProviders');
   return v;
 }
-export function useChatCtx(): ChatCtx {
-  const v = useContext(ChatContext);
-  if (!v) throw new Error('useChatCtx must be used inside AppProviders');
+/** Changes only when something other than streamed text changes (busy, agent, thread, error...). */
+export function useChatMeta(): ChatMeta {
+  const v = useContext(MetaContext);
+  if (!v) throw new Error('useChatMeta must be used inside AppProviders');
   return v;
 }
+/** Changes on every streamed token. Use only where the message list itself is needed. */
+export function useChatMessages(): UIMessage[] {
+  const v = useContext(MessagesContext);
+  if (!v) throw new Error('useChatMessages must be used inside AppProviders');
+  return v.messages;
+}
+/** Back-compat alias: the light, non-streaming context. */
+export const useChatCtx = useChatMeta;
 
 /* -------------------------------------------------------------------------- */
 /*                                   helpers                                  */
@@ -132,19 +168,11 @@ const MAX_BODY = 4_300_000;
 /*                                login + splash                              */
 /* -------------------------------------------------------------------------- */
 
-function LogoMark({ size = 56 }: { size?: number }) {
-  return (
-    <div className='grid place-items-center text-white' style={{ width: size, height: size, borderRadius: size * 0.3, background: 'linear-gradient(135deg, var(--accent), var(--accent-2))', boxShadow: '0 10px 30px color-mix(in srgb, var(--accent) 40%, transparent)' }}>
-      <Icon name='spark' size={size * 0.5} />
-    </div>
-  );
-}
-
 function Splash() {
   return (
     <div className='grid h-[100dvh] place-items-center'>
       <div className='fade-up flex flex-col items-center gap-4'>
-        <LogoMark size={64} />
+        <Logo size={72} />
         <div className='skeleton h-3 w-28' />
       </div>
     </div>
@@ -171,7 +199,7 @@ function LoginScreen({ onLoggedIn }: { onLoggedIn: () => void }) {
     <div className='safe-top safe-bottom grid min-h-[100dvh] place-items-center px-5'>
       <form onSubmit={submit} className='card fade-up w-full max-w-sm p-7' style={{ boxShadow: 'var(--shadow)' }}>
         <div className='mb-6 flex flex-col items-center text-center'>
-          <LogoMark />
+          <Logo size={72} />
           <h1 className='mt-4 text-xl font-semibold tracking-tight'>Hybrid AI Agent</h1>
           <p className='mt-1 text-sm text-[color:var(--muted)]'>Your private multi-agent assistant</p>
         </div>
@@ -189,16 +217,22 @@ function LoginScreen({ onLoggedIn }: { onLoggedIn: () => void }) {
 /*                                chat engine                                 */
 /* -------------------------------------------------------------------------- */
 
+const ACTION_KEYS = ['send', 'edit', 'retry', 'branch', 'remove', 'stop', 'clearError', 'decide', 'newChat', 'openThread', 'deleteThread', 'renameThread', 'pinThread', 'deleteAllThreads', 'exportAll', 'setAgent', 'setReplyTo', 'resume', 'dismissInterrupt'] as const;
+const NETWORK_ERR = /network|failed to fetch|load failed|terminated|connection|abort|econnreset|socket|timed? ?out/i;
+
 function ChatEngine({ children, facts, addMemory }: { children: ReactNode; facts: MemoryFact[]; addMemory: (f: { id?: string; fact: string; tag?: string; ts?: number }) => void }) {
   const app = useApp();
-  const { settings } = app;
+  const router = useRouter();
+  const { settings, profile } = app;
   const [agent, setAgent] = useState<AgentId>(settings.agent);
   const [incognito, setIncognito] = useState(false);
   const [route, setRoute] = useState<RouteInfo | null>(null);
   const [threads, setThreads] = useState<ThreadMeta[]>([]);
+  const [replyTo, setReplyTo] = useState<ReplyTarget | null>(null);
+  const [interrupted, setInterrupted] = useState(false);
 
-  const ref = useRef({ settings, permissions: app.permissions, facts, agent, incognito, rotation: 0 });
-  ref.current = { ...ref.current, settings, permissions: app.permissions, facts, agent, incognito };
+  const ref = useRef({ settings, permissions: app.permissions, facts, agent, incognito, profile, replyTo, rotation: 0 });
+  ref.current = { ...ref.current, settings, permissions: app.permissions, facts, agent, incognito, profile, replyTo };
   const threadsRef = useRef<ThreadMeta[]>([]);
   threadsRef.current = threads;
   const branchOf = useRef<Record<string, string>>({});
@@ -218,6 +252,8 @@ function ChatEngine({ children, facts, addMemory }: { children: ReactNode; facts
             permissions: s.permissions,
             persona: s.settings.persona,
             memory: s.settings.memoryEnabled && !s.incognito ? factsForPrompt(s.facts, 10) : [],
+            profile: s.settings.memoryEnabled && !s.incognito ? s.profile : undefined,
+            chains: s.settings.chains,
             agent: s.agent,
             incognito: s.incognito,
             rotation: s.rotation,
@@ -242,7 +278,7 @@ function ChatEngine({ children, facts, addMemory }: { children: ReactNode; facts
     [transport],
   );
   const [chat, setChat] = useState<Chat<UIMessage>>(() => makeChat(newId(), []));
-  const { messages, status, error, sendMessage, regenerate, setMessages, stop, clearError, addToolApprovalResponse } = useChat({ chat, experimental_throttle: 50 });
+  const { messages, status, error, sendMessage, regenerate, setMessages, stop, clearError, addToolApprovalResponse } = useChat({ chat, experimental_throttle: 90 });
   const busy = status === 'submitted' || status === 'streaming';
 
   /* ---------- threads index ---------- */
@@ -282,6 +318,55 @@ function ChatEngine({ children, facts, addMemory }: { children: ReactNode; facts
     return () => document.removeEventListener('visibilitychange', flush);
   }, [persistNow]);
 
+  /* ---------- recovery when Chrome was in the background ---------- */
+  const busyRef = useRef(false);
+  busyRef.current = busy;
+  const lastProgress = useRef(Date.now());
+  const hiddenAt = useRef(0);
+  const returnedAt = useRef(0);
+  const autoRetried = useRef(false);
+
+  useEffect(() => {
+    lastProgress.current = Date.now();
+  }, [messages, status]);
+
+  useEffect(() => {
+    const back = (kind: 'visibility' | 'focus' | 'online') => {
+      if (kind === 'visibility' && document.visibilityState === 'hidden') {
+        hiddenAt.current = Date.now();
+        return;
+      }
+      const wasAway = hiddenAt.current > 0 && Date.now() - hiddenAt.current > 1500;
+      if (kind !== 'online' && !wasAway) return;
+      hiddenAt.current = 0;
+      returnedAt.current = Date.now();
+      // The phone may have frozen the connection while the tab was hidden: stop waiting and offer Continue.
+      if (busyRef.current && Date.now() - lastProgress.current > 6000) {
+        void chat.stop();
+        setInterrupted(true);
+      }
+    };
+    const onVis = () => back('visibility');
+    const onFocus = () => back('focus');
+    const onOnline = () => back('online');
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('online', onOnline);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('online', onOnline);
+    };
+  }, [chat]);
+
+  // One silent retry when a network error shows up right after coming back from the background.
+  useEffect(() => {
+    if (!error || autoRetried.current || Date.now() - returnedAt.current > 10_000 || !NETWORK_ERR.test(error.message)) return;
+    autoRetried.current = true;
+    clearError();
+    void regenerate();
+  }, [error, clearError, regenerate]);
+
   /* ---------- side effects of finished answers ---------- */
   const prevBusy = useRef(false);
   useEffect(() => {
@@ -313,15 +398,32 @@ function ChatEngine({ children, facts, addMemory }: { children: ReactNode; facts
     }
   }, [messages, incognito, settings.memoryEnabled, addMemory, app]);
 
-  /* ---------- actions ---------- */
+  /* ---------- thread actions ---------- */
   const newChat = useCallback(
     (opts?: { incognito?: boolean }) => {
       chat.stop();
       const inc = Boolean(opts?.incognito);
       setIncognito(inc);
       setRoute(null);
+      setReplyTo(null);
+      setInterrupted(false);
       ref.current.rotation = 0;
       setChat(makeChat((inc ? 'incognito-' : '') + newId(), []));
+    },
+    [chat, makeChat],
+  );
+
+  const openThread = useCallback(
+    async (id: string) => {
+      chat.stop();
+      const msgs = await loadThread(id);
+      setIncognito(false);
+      setRoute(null);
+      setReplyTo(null);
+      setInterrupted(false);
+      const meta = threadsRef.current.find((t) => t.id === id);
+      if (meta?.agent && meta.agent in AGENTS) setAgent(meta.agent as AgentId);
+      setChat(makeChat(id, msgs));
     },
     [chat, makeChat],
   );
@@ -336,8 +438,42 @@ function ChatEngine({ children, facts, addMemory }: { children: ReactNode; facts
     [app],
   );
 
+  /** Commands that change app state instead of going to a model. */
+  const runCommand = useCallback(
+    async (cmd: ChatCommand) => {
+      if (cmd.kind === 'last-chat') {
+        const other = [...threadsRef.current].filter((t) => t.id !== chat.id).sort((a, b) => b.updatedAt - a.updatedAt)[0];
+        if (!other) return app.notify('There is no other saved chat yet.');
+        await openThread(other.id);
+        router.push('/');
+        return app.notify('Switched to your last chat: ' + other.title);
+      }
+      if (cmd.kind === 'find-chat') {
+        const words = cmd.query.toLowerCase().split(/\s+/).filter((w) => w.length > 1);
+        const hit = [...threadsRef.current]
+          .filter((t) => t.id !== chat.id)
+          .filter((t) => words.every((w) => (t.title + ' ' + (t.preview ?? '')).toLowerCase().includes(w)))
+          .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+        if (!hit) return app.notify('No saved chat matches "' + cmd.query + '".');
+        await openThread(hit.id);
+        router.push('/');
+        return app.notify('Opened chat: ' + hit.title);
+      }
+      if (cmd.kind === 'primary') {
+        const base = effectiveChain(cmd.agent, ref.current.settings.chains[cmd.agent]);
+        const order = [cmd.model.key, ...base.filter((k) => k !== cmd.model.key)];
+        app.setSetting('chains', { ...ref.current.settings.chains, [cmd.agent]: order });
+        return app.notify(cmd.model.label + ' is now #1 for ' + AGENTS[cmd.agent].name + '. New order starts: ' + order.slice(0, 3).map((k) => MODEL_BY_KEY[k]?.label ?? k).join(' > ') + '. Saved on this device and Drive.');
+      }
+      if (cmd.kind === 'model-unknown') return app.notify('I could not find "' + cmd.text + '". Try a name like Gemini 4 Hydrogen, GPT-OSS 120B or Qwen 3.8 27B, optionally followed by an agent (for example researcher).');
+      if (cmd.kind === 'profile') router.push('/settings#profile');
+    },
+    [app, chat.id, openThread, router],
+  );
+
+  /* ---------- sending ---------- */
   const send = useCallback(
-    async (rawText: string, attachments: Attachment[] = []) => {
+    async (rawText: string, attachments: Attachment[] = [], opts?: { agent?: AgentId }) => {
       const text = rawText.trim();
       const env = text.match(/^\/env\s+([A-Za-z_][A-Za-z0-9_]*)=([\s\S]+)$/);
       if (env) return handleEnv(env[1].toUpperCase(), env[2].trim());
@@ -345,19 +481,42 @@ function ChatEngine({ children, facts, addMemory }: { children: ReactNode; facts
       if (text === '/clear') return newChat();
       if (text === '/incognito') return newChat({ incognito: true });
       if (!text && attachments.length === 0) return;
+      if (attachments.length === 0) {
+        const cmd = parseCommand(text, ref.current.agent);
+        if (cmd) return runCommand(cmd);
+      }
 
+      if (!ref.current.incognito && ref.current.settings.memoryEnabled) {
+        const learned = learnFromMessage(text, ref.current.profile);
+        if (learned) {
+          app.setProfile(learned.profile);
+          app.notify('Noted: ' + learned.note);
+        }
+      }
+
+      if (opts?.agent) {
+        ref.current.agent = opts.agent;
+        setAgent(opts.agent);
+      }
       const parts: PartLike[] = [];
       parts.push({ type: 'text', text: text || 'Please look at the attached file' + (attachments.length > 1 ? 's' : '') + ' and summarise the key points.' });
+      const reply = ref.current.replyTo;
+      if (reply) {
+        parts.push({ type: 'text', text: replyTextPart(reply.role, reply.snippet) });
+        setReplyTo(null);
+      }
       for (const a of attachments) {
         if ((a.kind === 'image' || a.kind === 'pdf') && a.dataUrl) parts.push({ type: 'file', mediaType: a.mediaType, url: a.dataUrl, filename: a.name });
         else if (a.text !== undefined) parts.push({ type: 'text', text: fileTextPart(a) });
       }
       ref.current.rotation = 0;
+      autoRetried.current = false;
+      setInterrupted(false);
       clearError();
-      haptic(settings.haptics);
+      haptic(ref.current.settings.haptics);
       await sendMessage({ parts } as never);
     },
-    [app, clearError, facts, handleEnv, newChat, sendMessage, settings.haptics],
+    [app, clearError, facts, handleEnv, newChat, runCommand, sendMessage],
   );
 
   const edit = useCallback(
@@ -365,10 +524,12 @@ function ChatEngine({ children, facts, addMemory }: { children: ReactNode; facts
       const m = messages.find((x) => x.id === messageId);
       if (!m || !text.trim()) return;
       const parts = [...(m.parts as unknown as PartLike[])];
-      const i = parts.findIndex((p) => p.type === 'text' && !parseFileMark(p.text ?? ''));
+      const i = parts.findIndex((p) => p.type === 'text' && !isMarkerText(p.text ?? ''));
       if (i >= 0) parts[i] = { ...parts[i], text: text.trim() };
       else parts.unshift({ type: 'text', text: text.trim() });
       ref.current.rotation = 0;
+      autoRetried.current = false;
+      setInterrupted(false);
       clearError();
       await sendMessage({ parts, messageId } as never);
     },
@@ -378,11 +539,21 @@ function ChatEngine({ children, facts, addMemory }: { children: ReactNode; facts
   const retry = useCallback(
     (messageId?: string, another?: boolean) => {
       ref.current.rotation = another ? ref.current.rotation + 1 : 0;
+      autoRetried.current = false;
+      setInterrupted(false);
       clearError();
       void regenerate(messageId ? { messageId } : undefined);
     },
     [clearError, regenerate],
   );
+
+  /** Continue after an interruption: replaces the partial reply, never adds a second user turn. */
+  const resume = useCallback(() => {
+    setInterrupted(false);
+    autoRetried.current = true;
+    clearError();
+    void regenerate();
+  }, [clearError, regenerate]);
 
   const remove = useCallback(
     (messageId: string) => {
@@ -418,19 +589,6 @@ function ChatEngine({ children, facts, addMemory }: { children: ReactNode; facts
     [agent, app, chat, incognito, makeChat, messages],
   );
 
-  const openThread = useCallback(
-    async (id: string) => {
-      chat.stop();
-      const msgs = await loadThread(id);
-      setIncognito(false);
-      setRoute(null);
-      const meta = threadsRef.current.find((t) => t.id === id);
-      if (meta?.agent && meta.agent in AGENTS) setAgent(meta.agent as AgentId);
-      setChat(makeChat(id, msgs));
-    },
-    [chat, makeChat],
-  );
-
   const deleteThread = useCallback(
     async (id: string) => {
       const next = threadsRef.current.filter((t) => t.id !== id);
@@ -464,8 +622,8 @@ function ChatEngine({ children, facts, addMemory }: { children: ReactNode; facts
   const exportAll = useCallback(async () => {
     const out: { meta: ThreadMeta; messages: UIMessage[] }[] = [];
     for (const t of threadsRef.current) out.push({ meta: t, messages: await loadThread(t.id) });
-    return JSON.stringify({ exportedAt: new Date().toISOString(), app: 'Hybrid AI Agent', memory: facts, threads: out }, null, 2);
-  }, [facts]);
+    return JSON.stringify({ exportedAt: new Date().toISOString(), app: 'Hybrid AI Agent', memory: facts, profile, threads: out }, null, 2);
+  }, [facts, profile]);
 
   /* ---------- url hooks: PWA shortcut ---------- */
   useEffect(() => {
@@ -477,65 +635,50 @@ function ChatEngine({ children, facts, addMemory }: { children: ReactNode; facts
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const value = useMemo<ChatCtx>(
-    () => ({
-      messages,
-      status,
-      error,
-      busy,
-      route,
-      threadId: chat.id,
-      incognito,
-      agent,
-      setAgent,
-      threads,
-      send,
-      edit,
-      retry,
-      branch,
-      remove,
-      stop: () => void stop(),
-      clearError,
-      decide: (approvalId, approved) => void addToolApprovalResponse({ id: approvalId, approved }),
-      newChat,
-      openThread,
-      deleteThread,
-      renameThread,
-      pinThread,
-      deleteAllThreads,
-      exportAll,
-    }),
-    [messages, status, error, busy, route, chat.id, incognito, agent, threads, send, edit, retry, branch, remove, stop, clearError, addToolApprovalResponse, newChat, openThread, deleteThread, renameThread, pinThread, deleteAllThreads, exportAll],
+  /* ---------- contexts ---------- */
+  const meta = useMemo<ChatMeta>(
+    () => ({ status, error, busy, route, threadId: chat.id, incognito, agent, threads, replyTo, interrupted }),
+    [status, error, busy, route, chat.id, incognito, agent, threads, replyTo, interrupted],
   );
+  const msgCtx = useMemo<ChatMessagesCtx>(() => ({ messages }), [messages]);
 
-  const liveRef = useRef<ChatActions>(value);
-  liveRef.current = value;
+  const impl: ChatActions = {
+    send,
+    edit,
+    retry,
+    branch,
+    remove,
+    stop: () => {
+      setInterrupted(false);
+      void stop();
+    },
+    clearError,
+    decide: (approvalId, approved) => void addToolApprovalResponse({ id: approvalId, approved }),
+    newChat,
+    openThread,
+    deleteThread,
+    renameThread,
+    pinThread,
+    deleteAllThreads,
+    exportAll,
+    setAgent,
+    setReplyTo,
+    resume,
+    dismissInterrupt: () => setInterrupted(false),
+  };
+  const liveRef = useRef<ChatActions>(impl);
+  liveRef.current = impl;
   const actions = useMemo<ChatActions>(
-    () => ({
-      send: (...a) => liveRef.current.send(...a),
-      edit: (...a) => liveRef.current.edit(...a),
-      retry: (...a) => liveRef.current.retry(...a),
-      branch: (...a) => liveRef.current.branch(...a),
-      remove: (...a) => liveRef.current.remove(...a),
-      stop: () => liveRef.current.stop(),
-      clearError: () => liveRef.current.clearError(),
-      decide: (...a) => liveRef.current.decide(...a),
-      newChat: (...a) => liveRef.current.newChat(...a),
-      openThread: (...a) => liveRef.current.openThread(...a),
-      deleteThread: (...a) => liveRef.current.deleteThread(...a),
-      renameThread: (...a) => liveRef.current.renameThread(...a),
-      pinThread: (...a) => liveRef.current.pinThread(...a),
-      deleteAllThreads: () => liveRef.current.deleteAllThreads(),
-      exportAll: () => liveRef.current.exportAll(),
-      setAgent: (...a) => liveRef.current.setAgent(...a),
-    }),
+    () => Object.fromEntries(ACTION_KEYS.map((k) => [k, (...a: unknown[]) => (liveRef.current[k] as (...x: unknown[]) => unknown)(...a)])) as unknown as ChatActions,
     [],
   );
 
   return (
-    <ChatContext.Provider value={value}>
-      <ActionsContext.Provider value={actions}>{children}</ActionsContext.Provider>
-    </ChatContext.Provider>
+    <MetaContext.Provider value={meta}>
+      <MessagesContext.Provider value={msgCtx}>
+        <ActionsContext.Provider value={actions}>{children}</ActionsContext.Provider>
+      </MessagesContext.Provider>
+    </MetaContext.Provider>
   );
 }
 
@@ -549,6 +692,8 @@ export default function AppProviders({ children }: { children: ReactNode }) {
   const [notices, setNotices] = useState<Notice[]>([]);
   const [permissions, setPermissions] = useState<Record<string, Permission>>({});
   const [facts, setFacts] = useState<MemoryFact[]>([]);
+  const [profile, setProfileState] = useState<UserProfile>(DEFAULT_PROFILE);
+  const profileTimer = useRef<number | undefined>(undefined);
   const [drawer, setDrawer] = useState<{ open: boolean; notice: string | null }>({ open: false, notice: null });
   const syncTimer = useRef<number | undefined>(undefined);
 
@@ -556,6 +701,12 @@ export default function AppProviders({ children }: { children: ReactNode }) {
     const s = loadSettingsLocal();
     setSettings(s);
     applyTheme(s);
+    try {
+      const raw = localStorage.getItem(PROFILE_LOCAL_KEY);
+      if (raw) setProfileState({ ...DEFAULT_PROFILE, ...(JSON.parse(raw) as Partial<UserProfile>) });
+    } catch {
+      /* ignore broken saved profile */
+    }
     void apiRequest<{ authed?: boolean }>('/api/auth').then((r) => setAuthed(Boolean(r.data?.authed)));
   }, []);
 
@@ -576,6 +727,17 @@ export default function AppProviders({ children }: { children: ReactNode }) {
         setSettings(merged);
         saveSettingsLocal(merged);
         applyTheme(merged);
+      }
+    });
+    void storage.load<UserProfile>(PROFILE_KEY).then((r) => {
+      if (r.value && !localStorage.getItem(PROFILE_LOCAL_KEY)) {
+        const merged = { ...DEFAULT_PROFILE, ...r.value };
+        setProfileState(merged);
+        try {
+          localStorage.setItem(PROFILE_LOCAL_KEY, JSON.stringify(merged));
+        } catch {
+          /* ignore */
+        }
       }
     });
     void storage.load<Record<string, Permission>>('prefs/permissions').then((r) => r.value && setPermissions(r.value));
@@ -612,6 +774,20 @@ export default function AppProviders({ children }: { children: ReactNode }) {
   }, []);
 
   const removeFact = useCallback(async (id: string) => setFacts(await deleteFact(id)), []);
+  const addFactManual = useCallback(async (text: string) => setFacts(await addFact({ fact: text, tag: 'manual' })), []);
+  const editFact = useCallback(async (id: string, text: string) => setFacts(await updateFact(id, text)), []);
+  const setProfile = useCallback((p: UserProfile) => {
+    const next = { ...p, updatedAt: Date.now() };
+    setProfileState(next);
+    try {
+      localStorage.setItem(PROFILE_LOCAL_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+    window.clearTimeout(profileTimer.current);
+    profileTimer.current = window.setTimeout(() => void storage.save(PROFILE_KEY, next), 1200);
+  }, []);
+  const resetProfile = useCallback(() => setProfile({ ...DEFAULT_PROFILE }), [setProfile]);
   const addMemory = useCallback((f: { id?: string; fact: string; tag?: string; ts?: number }) => void addFact(f).then(setFacts), []);
   const logout = useCallback(async () => {
     await apiRequest('/api/auth', { method: 'DELETE' });
@@ -625,8 +801,8 @@ export default function AppProviders({ children }: { children: ReactNode }) {
   }, []);
 
   const app = useMemo<AppCtx>(
-    () => ({ settings, setSetting, resetSettings, notify, openConnectors, permissions, facts, removeFact, logout }),
-    [settings, setSetting, resetSettings, notify, openConnectors, permissions, facts, removeFact, logout],
+    () => ({ settings, setSetting, resetSettings, notify, openConnectors, permissions, facts, removeFact, addFactManual, editFact, profile, setProfile, resetProfile, logout }),
+    [settings, setSetting, resetSettings, notify, openConnectors, permissions, facts, removeFact, addFactManual, editFact, profile, setProfile, resetProfile, logout],
   );
 
   if (authed === null) return <Splash />;
@@ -638,7 +814,7 @@ export default function AppProviders({ children }: { children: ReactNode }) {
         {children}
       </ChatEngine>
       <ConnectorsDrawer open={drawer.open} onClose={() => setDrawer({ open: false, notice: null })} permissions={permissions} onPermissionsChange={onPermissions} initialNotice={drawer.notice ? { type: 'ok', text: drawer.notice } : undefined} />
-      <div className='pointer-events-none fixed inset-x-0 z-50 flex flex-col items-center gap-2 px-4' style={{ bottom: 'calc(env(safe-area-inset-bottom) + 84px)' }}>
+      <div className='pointer-events-none fixed inset-x-0 z-[70] flex flex-col items-center gap-2 px-4' style={{ top: 'calc(env(safe-area-inset-top) + 68px)' }}>
         {notices.map((n) => (
           <div key={n.id} className='glass-strong pop-in pointer-events-auto max-w-md rounded-2xl px-4 py-2.5 text-sm' style={{ boxShadow: 'var(--shadow)' }}>
             {n.text}

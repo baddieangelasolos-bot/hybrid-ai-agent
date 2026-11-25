@@ -3,11 +3,13 @@ import type { ReactNode } from 'react';
 export type IconName =
   | 'search' | 'x' | 'check' | 'plus' | 'send' | 'trash' | 'copy' | 'down' | 'right' | 'cloud' | 'cloud-off'
   | 'refresh' | 'plug' | 'key' | 'external' | 'clip' | 'spark' | 'terminal' | 'lock' | 'menu' | 'play' | 'code' | 'alert'
-  | 'brain' | 'pen' | 'eye' | 'book' | 'image' | 'bolt' | 'ghost' | 'mic' | 'mic-off' | 'more' | 'edit' | 'branch' | 'speaker' | 'sun' | 'moon' | 'settings' | 'activity' | 'history' | 'chat' | 'user' | 'download' | 'file' | 'stop' | 'shield' | 'info' | 'pin' | 'globe' | 'phone' | 'bot' | 'upload' | 'arrow-up' | 'left';
+  | 'brain' | 'pen' | 'eye' | 'book' | 'image' | 'bolt' | 'ghost' | 'mic' | 'mic-off' | 'more' | 'edit' | 'branch' | 'speaker' | 'sun' | 'moon' | 'settings' | 'activity' | 'history' | 'chat' | 'user' | 'download' | 'file' | 'stop' | 'shield' | 'info' | 'pin' | 'globe' | 'phone' | 'bot' | 'upload' | 'arrow-up' | 'left' | 'reply' | 'up';
 
 const PATHS: Record<IconName, ReactNode> = {
   search: (<><circle cx='11' cy='11' r='7' /><path d='M21 21l-4.3-4.3' /></>),
   x: <path d='M18 6L6 18M6 6l12 12' />,
+  reply: (<><path d='M9 14L4 9l5-5' /><path d='M20 20v-7a4 4 0 0 0-4-4H4' /></>),
+  up: <path d='M18 15l-6-6-6 6' />,
   check: <path d='M20 6L9 17l-5-5' />,
   plus: <path d='M12 5v14M5 12h14' />,
   send: (<><path d='M22 2L11 13' /><path d='M22 2l-7 20-4-9-9-4 20-7z' /></>),

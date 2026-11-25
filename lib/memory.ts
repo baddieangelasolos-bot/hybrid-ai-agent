@@ -28,6 +28,14 @@ export async function addFact(input: { id?: string; fact: string; tag?: string; 
   return persist([next, ...facts]);
 }
 
+/** Edit = same id, new text (delete + add with the same id, kept in place). */
+export async function updateFact(id: string, fact: string): Promise<MemoryFact[]> {
+  const facts = await loadFacts();
+  const text = fact.trim();
+  if (!text) return facts;
+  return persist(facts.map((f) => (f.id === id ? { ...f, fact: text, ts: Date.now() } : f)));
+}
+
 export async function deleteFact(id: string): Promise<MemoryFact[]> {
   const facts = await loadFacts();
   return persist(facts.filter((f) => f.id !== id));

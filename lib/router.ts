@@ -51,5 +51,5 @@ export function routeIntent(text: string, flags: { image: boolean; doc: boolean 
 }
 
 export function wantsMemoryTool(text: string): boolean {
-  return /\b(remember|don'?t forget|my name is|i prefer|i like|i'?m a|i am a|i live|from now on|always (use|reply|answer))\b/i.test(text);
+  return /\b(remember|don'?t forget|note that|keep in mind|my name is|call me|i prefer|i like|i love|i hate|i don'?t like|i'?m a|i am a|i'?m (in|from|studying|preparing)|i live|i study|i'?m preparing|my (exam|goal|subject|favou?rite)|from now on|always (use|reply|answer|explain)|never (use|reply|answer))\b/i.test(text);
 }

@@ -1,5 +1,9 @@
 'use client';
 
+import { FILE_MARK } from './markers';
+
+export { FILE_MARK, REPLY_MARK, isMarkerText, parseFileMark, parseReplyMark, replyTextPart } from './markers';
+
 export type AttachKind = 'image' | 'pdf' | 'text' | 'audio';
 
 export interface Attachment {
@@ -101,18 +105,9 @@ export async function processFile(file: File, language: string): Promise<Attachm
   throw new Error('This file type is not supported yet. Use an image, PDF, audio or text/code file (for Word or Excel, export to PDF or CSV first).');
 }
 
-export const FILE_MARK = '[[file:';
-
 /** Text attachments travel as their own text part with a marker, so the UI can show a chip instead of the content. */
 export function fileTextPart(a: Attachment): string {
   return FILE_MARK + a.name + ']]\n' + (a.kind === 'audio' ? 'Transcript of audio file "' + a.name + '":\n' : '```\n') + (a.text ?? '') + (a.kind === 'audio' ? '' : '\n```');
-}
-
-export function parseFileMark(text: string): { name: string; body: string } | null {
-  if (!text.startsWith(FILE_MARK)) return null;
-  const end = text.indexOf(']]');
-  if (end < 0) return null;
-  return { name: text.slice(FILE_MARK.length, end), body: text.slice(end + 3) };
 }
 
 export function formatBytes(n: number): string {

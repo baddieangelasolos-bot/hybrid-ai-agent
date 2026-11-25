@@ -10,7 +10,7 @@ export const generateImageTool = tool({
   }),
   execute: async ({ prompt, aspect }) => {
     const r = await generateImage(prompt, aspect);
-    return r.ok ? { ok: true as const, prompt, provider: r.provider, model: r.model, mediaType: r.mediaType, dataUrl: r.dataUrl } : { ok: false as const, error: r.error };
+    return r.ok ? { ok: true as const, prompt, provider: r.provider, model: r.model, mediaType: r.mediaType, dataUrl: r.dataUrl } : { ok: false as const, error: r.error, unconfigured: Boolean((r as { unconfigured?: boolean }).unconfigured) };
   },
   toModelOutput: ({ output }) => {
     const o = output as { ok: boolean; provider?: string; model?: string; error?: string };

@@ -80,6 +80,9 @@ export const readRepoFile = tool({
   },
 });
 
+let lastPushAt = 0;
+const PUSH_COOLDOWN_MS = 3 * 60 * 1000;
+
 export const pushToGitHubRepo = tool({
   description:
     'Create ONE atomic commit with several files on the agent repository. Provide the COMPLETE final content of every written file (no placeholders, no "rest unchanged"). Requires explicit user approval.',
@@ -98,6 +101,7 @@ export const pushToGitHubRepo = tool({
   }),
   execute: async (input) => {
     try {
+      if (Date.now() - lastPushAt < PUSH_COOLDOWN_MS) return { pushed: false, error: 'Rebuild-loop guard: a push happened less than 3 minutes ago. Wait for the Vercel build to finish (checkVercelDeployment) before pushing again.' };
       const verdict = validatePushFiles(input.files);
       if (!verdict.ok) return { pushed: false, error: verdict.reason };
       const { repo, branch } = ghConfig();
@@ -120,6 +124,7 @@ export const pushToGitHubRepo = tool({
         method: 'PATCH',
         body: JSON.stringify({ sha: commit.sha }),
       });
+      lastPushAt = Date.now();
       return { pushed: true, branch, commit: commit.sha, url: commit.html_url ?? '', files: input.files.length };
     } catch (e) {
       return { pushed: false, error: redactSecrets(errMsg(e)) };

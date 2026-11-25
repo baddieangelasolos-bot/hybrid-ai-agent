@@ -54,7 +54,8 @@ export function compactForSave(messages: UIMessage[]): UIMessage[] {
 export function titleFrom(messages: UIMessage[]): string {
   const first = messages.find((m) => m.role === 'user');
   const text = ((first?.parts ?? []) as unknown as PartLike[]).map((p) => (p.type === 'text' ? (p.text ?? '') : '')).join(' ').replace(/\s+/g, ' ').trim();
-  return text ? (text.length > 48 ? text.slice(0, 48) + '...' : text) : 'New chat';
+  const clean = text.replace(/^\/[a-z-]+\s+/i, '') || text;
+  return clean ? (clean.length > 48 ? clean.slice(0, 48) + '...' : clean) : 'New chat';
 }
 
 export function previewFrom(messages: UIMessage[]): string {

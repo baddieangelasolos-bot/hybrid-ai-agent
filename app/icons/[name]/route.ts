@@ -1,3 +1,4 @@
+import { LOGO_SVG } from '@/lib/logo';
 import { renderIcon } from '@/lib/png';
 
 export const runtime = 'nodejs';
@@ -14,6 +15,7 @@ const cache = new Map<string, Buffer>();
 /** Public on purpose: the browser fetches the manifest and icons before sign-in. */
 export async function GET(_req: Request, ctx: { params: Promise<{ name: string }> }): Promise<Response> {
   const { name } = await ctx.params;
+  if (name === 'logo.svg') return new Response(LOGO_SVG, { headers: { 'content-type': 'image/svg+xml', 'cache-control': 'public, max-age=86400' } });
   const spec = SPECS[name];
   if (!spec) return new Response('Not found', { status: 404 });
   let png = cache.get(name);

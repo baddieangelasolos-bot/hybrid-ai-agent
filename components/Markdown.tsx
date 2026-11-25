@@ -113,6 +113,20 @@ function renderBlocks(src: string, base: string): ReactNode[] {
   return out;
 }
 
+/**
+ * One blank-line separated block. Memoised on its text, so while an answer streams only the block that is
+ * still growing is parsed and re-rendered; every finished block above it is skipped by React.
+ */
+const Chunk = memo(function Chunk({ src, base }: { src: string; base: string }) {
+  return <>{renderBlocks(src, base)}</>;
+});
+const FencedCode = memo(CodeBlock);
+
+function textBlocks(src: string, seg: number): ReactNode[] {
+  // Blank lines already end paragraphs, lists, quotes and tables, so splitting on them changes nothing visually.
+  return src.split(/\n[ \t]*\n/).map((c, i) => (c.trim() ? <Chunk key={'t' + seg + '-' + i} src={c} base={'m' + seg + '-' + i} /> : null));
+}
+
 function Markdown({ text }: { text: string }) {
   const nodes: ReactNode[] = [];
   let rest = text;
@@ -120,20 +134,20 @@ function Markdown({ text }: { text: string }) {
   for (;;) {
     const open = rest.indexOf('```');
     if (open < 0) {
-      nodes.push(...renderBlocks(rest, 'm' + n++));
+      nodes.push(...textBlocks(rest, n++));
       break;
     }
-    nodes.push(...renderBlocks(rest.slice(0, open), 'm' + n++));
+    nodes.push(...textBlocks(rest.slice(0, open), n++));
     const afterOpen = rest.slice(open + 3);
     const nl = afterOpen.indexOf('\n');
     const lang = nl >= 0 ? afterOpen.slice(0, nl).trim() : afterOpen.trim();
     const body = nl >= 0 ? afterOpen.slice(nl + 1) : '';
     const close = body.indexOf('```');
     if (close < 0) {
-      nodes.push(<CodeBlock key={'c' + n++} code={body.replace(/\n$/, '')} lang={lang} />);
+      nodes.push(<FencedCode key={'c' + n++} code={body.replace(/\n$/, '')} lang={lang} />);
       break;
     }
-    nodes.push(<CodeBlock key={'c' + n++} code={body.slice(0, close).replace(/\n$/, '')} lang={lang} />);
+    nodes.push(<FencedCode key={'c' + n++} code={body.slice(0, close).replace(/\n$/, '')} lang={lang} />);
     rest = body.slice(close + 3);
   }
   return <div className='md break-words text-[15px] leading-relaxed'>{nodes}</div>;

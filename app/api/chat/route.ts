@@ -10,6 +10,9 @@ import { normalizePersona } from '@/lib/personas';
 import { routeIntent, wantsMemoryTool } from '@/lib/router';
 import { redactSecrets } from '@/lib/security';
 import { detectSkill } from '@/lib/skills';
+import { REPLY_MARK, replyForModel } from '@/lib/markers';
+import { profileBlock } from '@/lib/profile';
+import { MODEL_BY_KEY } from '@/lib/models';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -23,12 +26,21 @@ interface Body {
   incognito?: boolean;
   rotation?: number;
   cooldowns?: unknown;
+  profile?: unknown;
+  chains?: Record<string, unknown>;
 }
 
 interface PartLike {
   type: string;
   text?: string;
   mediaType?: string;
+}
+
+/** A quoted message is stored with a marker; the model gets it as one plain sentence. */
+function withReadableReplies(m: UIMessage): UIMessage {
+  const parts = m.parts as unknown as PartLike[];
+  if (!parts.some((p) => p.type === 'text' && p.text?.startsWith(REPLY_MARK))) return m;
+  return { ...m, parts: parts.map((p) => (p.type === 'text' && p.text?.startsWith(REPLY_MARK) ? { ...p, text: replyForModel(p.text) } : p)) as unknown as UIMessage['parts'] };
 }
 
 function lastUserMessage(messages: UIMessage[]): UIMessage | undefined {
@@ -56,12 +68,14 @@ export async function POST(req: Request): Promise<Response> {
   if (!Array.isArray(body.messages) || body.messages.length === 0) {
     return json({ ok: false, code: 'bad-request', message: 'messages must be a non-empty array.' }, 400);
   }
-  const messages = body.messages as UIMessage[];
+  const rawMessages = body.messages as UIMessage[];
+  const messages = rawMessages.map(withReadableReplies);
   absorbClientCooldowns(body.cooldowns);
 
-  const lastUser = lastUserMessage(messages);
+  const lastUser = lastUserMessage(rawMessages);
   const lastParts = (lastUser?.parts ?? []) as unknown as PartLike[];
-  const userText = lastParts.map((p) => (p.type === 'text' ? (p.text ?? '') : '')).join(' ');
+  // Quoted text (reply marker) must not steer routing: only what the person typed does.
+  const userText = lastParts.map((p) => (p.type === 'text' && !p.text?.startsWith(REPLY_MARK) ? (p.text ?? '') : '')).join(' ');
   const hasImage = lastParts.some((p) => p.type === 'file' && (p.mediaType ?? '').startsWith('image/'));
   const hasDoc = lastParts.some((p) => p.type === 'file' && !(p.mediaType ?? '').startsWith('image/'));
 
@@ -94,7 +108,10 @@ export async function POST(req: Request): Promise<Response> {
     memory,
     incognito,
     wantMemoryTool: agentId === 'auto' && wantsMemoryTool(userText),
+    profile: incognito ? '' : profileBlock(body.profile),
   });
+  const saved = body.chains && typeof body.chains === 'object' ? (body.chains as Record<string, unknown>)[agentId] : undefined;
+  const order = Array.isArray(saved) ? (saved as unknown[]).filter((k): k is string => typeof k === 'string' && k in MODEL_BY_KEY).slice(0, 20) : undefined;
 
   const keepTools = plan.toolset.activeNames.length > 0;
   const history = prepareHistory(messages, { keepTools, maxMessages: agentId === 'auto' || agentId === 'quick' ? 10 : 24, maxChars: agentId === 'auto' || agentId === 'quick' ? 12000 : 120000 });
@@ -107,6 +124,7 @@ export async function POST(req: Request): Promise<Response> {
     tools: keepTools,
     estTokens,
     rotation: typeof body.rotation === 'number' ? body.rotation : 0,
+    order,
   });
   if (chain.nodes.length === 0) {
     const why = chain.skipped.length > 0 ? ' (' + chain.skipped.slice(0, 4).map((s) => s.key.split(':')[1] + ': ' + s.why).join('; ') + ')' : '';
