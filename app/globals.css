@@ -44,8 +44,10 @@
 [data-accent='teal'] { --accent: #14b8a6; --accent-2: #38bdf8; }
 [data-accent='rose'] { --accent: #f0558a; --accent-2: #ff8a5b; }
 [data-accent='amber'] { --accent: #e8970f; --accent-2: #f0572b; }
+[data-accent='red'] { --accent: #ef4444; --accent-2: #f97316; }
 [data-theme='light'][data-accent='indigo'] { --accent: #3d5afe; }
 [data-theme='light'][data-accent='teal'] { --accent: #0e9f8f; }
+[data-theme='light'][data-accent='red'] { --accent: #dc2626; }
 
 /* legacy aliases used by older components */
 :root {

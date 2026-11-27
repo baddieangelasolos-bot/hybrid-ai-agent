@@ -18,6 +18,7 @@ const ACCENTS: { id: AccentPref; color: string }[] = [
   { id: 'teal', color: '#14b8a6' },
   { id: 'rose', color: '#f0558a' },
   { id: 'amber', color: '#e8970f' },
+  { id: 'red', color: '#ef4444' },
 ];
 
 const LANGS: [string, string][] = [

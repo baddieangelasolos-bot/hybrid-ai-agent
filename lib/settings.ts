@@ -4,7 +4,7 @@ import type { AgentId } from './agents';
 import type { Persona } from './types';
 
 export type ThemePref = 'system' | 'dark' | 'light';
-export type AccentPref = 'indigo' | 'violet' | 'teal' | 'rose' | 'amber';
+export type AccentPref = 'indigo' | 'violet' | 'teal' | 'rose' | 'amber' | 'red';
 
 export interface Settings {
   theme: ThemePref;
