@@ -197,7 +197,7 @@ function LoginScreen({ onLoggedIn }: { onLoggedIn: () => void }) {
 
   return (
     <div className='safe-top safe-bottom grid min-h-[100dvh] place-items-center px-5'>
-      <form onSubmit={submit} className='card fade-up w-full max-w-sm p-7' style={{ boxShadow: 'var(--shadow)' }}>
+      <form onSubmit={submit} className='card fade-up w-full max-sm p-7' style={{ boxShadow: 'var(--shadow)' }}>
         <div className='mb-6 flex flex-col items-center text-center'>
           <Logo size={72} />
           <h1 className='mt-4 text-xl font-semibold tracking-tight'>Hybrid AI Agent</h1>
@@ -254,6 +254,7 @@ function ChatEngine({ children, facts, addMemory }: { children: ReactNode; facts
             memory: s.settings.memoryEnabled && !s.incognito ? factsForPrompt(s.facts, 10) : [],
             profile: s.settings.memoryEnabled && !s.incognito ? s.profile : undefined,
             chains: s.settings.chains,
+            efforts: s.settings.efforts,
             agent: s.agent,
             incognito: s.incognito,
             rotation: s.rotation,

@@ -1,6 +1,4 @@
-'use client';
-
-import type { AgentId } from './agents';
+import type { AgentId, Effort } from './agents';
 import type { Persona } from './types';
 
 export type ThemePref = 'system' | 'dark' | 'light';
@@ -24,6 +22,8 @@ export interface Settings {
   autoSpeak: boolean;
   /** Saved fallback order per agent (model keys); empty = built-in order. */
   chains: Record<string, string[]>;
+  /** Saved thinking level per agent; empty = built-in default. */
+  efforts: Record<string, Effort>;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -43,6 +43,7 @@ export const DEFAULT_SETTINGS: Settings = {
   voiceLang: 'en-US',
   autoSpeak: false,
   chains: {},
+  efforts: {},
 };
 
 export const SETTINGS_KEY = 'hya:settings';

@@ -5,11 +5,12 @@ import { useState } from 'react';
 import { useApp, useChatActions, useChatCtx } from '@/components/AppProviders';
 import { PageScroll } from '@/components/AppShell';
 import { Icon } from '@/components/Icons';
-import { AGENTS, AGENT_ORDER, effectiveChain, type AgentId, type ToolGroup } from '@/lib/agents';
+import { AGENTS, AGENT_ORDER, effectiveChain, type AgentId, type ToolGroup, type Effort } from '@/lib/agents';
 import { MODEL_BY_KEY, PROVIDER_LABEL, SPECIAL_MODELS } from '@/lib/models';
 import { STATE_COLOR, STATE_LABEL, useModelHealth } from '@/lib/useHealth';
 
 const TOOL_LABEL: Record<ToolGroup, string> = { repo: 'GitHub + Vercel', web: 'Web search', image: 'Image generation', study: 'Quizzes + flashcards', workspace: 'File workspace' };
+const EFFORTS: Effort[] = ['minimal', 'low', 'medium', 'high'];
 
 export default function AgentsPage() {
   const router = useRouter();
@@ -19,19 +20,30 @@ export default function AgentsPage() {
   const { data } = useModelHealth();
   const [open, setOpen] = useState<string | null>('auto');
 
-  const save = (id: AgentId, order: string[]) => setSetting('chains', { ...settings.chains, [id]: order });
+  const saveChain = (id: AgentId, order: string[]) => setSetting('chains', { ...settings.chains, [id]: order });
   const move = (id: AgentId, order: string[], i: number, d: -1 | 1) => {
     const j = i + d;
     if (j < 0 || j >= order.length) return;
     const next = [...order];
     [next[i], next[j]] = [next[j], next[i]];
-    save(id, next);
+    saveChain(id, next);
   };
-  const first = (id: AgentId, order: string[], i: number) => save(id, [order[i], ...order.filter((_, x) => x !== i)]);
-  const reset = (id: AgentId) => {
+  const first = (id: AgentId, order: string[], i: number) => saveChain(id, [order[i], ...order.filter((_, x) => x !== i)]);
+  
+  const resetChain = (id: AgentId) => {
     const rest = { ...settings.chains };
     delete rest[id];
     setSetting('chains', rest);
+  };
+
+  const setEffort = (id: AgentId, e: Effort) => {
+    setSetting('efforts', { ...settings.efforts, [id]: e });
+  };
+
+  const resetEffort = (id: AgentId) => {
+    const rest = { ...settings.efforts };
+    delete rest[id];
+    setSetting('efforts', rest);
   };
 
   return (
@@ -44,14 +56,17 @@ export default function AgentsPage() {
           const a = AGENTS[id];
           const expanded = open === id;
           const current = agent === id;
-          const custom = Boolean(settings.chains[id]?.length);
+          const customChain = Boolean(settings.chains[id]?.length);
+          const customEffort = Boolean(settings.efforts[id]);
           const order = effectiveChain(id, settings.chains[id]);
+          const effort = settings.efforts[id] || a.effort;
+
           return (
             <div key={id} className='card overflow-hidden' style={current ? { borderColor: a.hue } : undefined}>
               <button className='flex w-full items-center gap-3 p-3.5 text-left' onClick={() => setOpen(expanded ? null : id)}>
                 <span className='grid h-11 w-11 flex-none place-items-center rounded-2xl text-white' style={{ background: a.hue }}><Icon name={a.icon} size={21} /></span>
                 <span className='min-w-0 flex-1'>
-                  <span className='flex items-center gap-2 text-[16px] font-semibold'>{a.name}{current && <span className='chip' style={{ color: a.hue }}>active</span>}{custom && <span className='chip'>custom order</span>}</span>
+                  <span className='flex items-center gap-2 text-[16px] font-semibold'>{a.name}{current && <span className='chip' style={{ color: a.hue }}>active</span>}{(customChain || customEffort) && <span className='chip'>customized</span>}</span>
                   <span className='block text-xs leading-snug text-[color:var(--muted)]'>{a.tagline}</span>
                 </span>
                 <span style={{ transform: expanded ? 'rotate(90deg)' : undefined, transition: 'transform .2s' }}><Icon name='right' size={16} /></span>
@@ -59,14 +74,24 @@ export default function AgentsPage() {
               {expanded && (
                 <div className='fade-up px-3.5 pb-3.5'>
                   <div className='mb-3 flex flex-wrap gap-1.5'>
-                    <span className='chip'>thinking: {a.effort}</span>
+                    <div className='flex items-center gap-1.5 rounded-lg border border-[color:var(--line)] bg-[color:var(--sheet)] py-0.5 pl-2.5 pr-1'>
+                      <span className='text-[10px] font-medium uppercase tracking-wider text-[color:var(--muted)]'>Thinking</span>
+                      <select 
+                        className='bg-transparent py-1 text-xs font-semibold outline-none' 
+                        value={effort} 
+                        onChange={(e) => setEffort(id, e.target.value as Effort)}
+                      >
+                        {EFFORTS.map(ev => <option key={ev} value={ev}>{ev}</option>)}
+                      </select>
+                      {customEffort && <button className='ml-1 text-[color:var(--accent)]' onClick={() => resetEffort(id)} aria-label='Reset effort'><Icon name='cross' size={12} /></button>}
+                    </div>
                     <span className='chip'>fails over after {Math.round(a.ttftMs / 1000)}s</span>
                     {a.tools.map((t) => <span key={t} className='chip'>{TOOL_LABEL[t]}</span>)}
                     {a.tools.length === 0 && <span className='chip'>answers directly</span>}
                   </div>
                   <div className='mb-1 flex items-center justify-between'>
                     <span className='text-[11px] font-medium uppercase tracking-wide text-[color:var(--muted)]'>Fallback order</span>
-                    {custom && <button className='text-xs underline underline-offset-2' style={{ color: 'var(--accent)' }} onClick={() => reset(id)}>Reset order</button>}
+                    {customChain && <button className='text-xs underline underline-offset-2' style={{ color: 'var(--accent)' }} onClick={() => resetChain(id)}>Reset order</button>}
                   </div>
                   <ol>
                     {order.map((k, i) => {
@@ -87,7 +112,7 @@ export default function AgentsPage() {
                       );
                     })}
                   </ol>
-                  <p className='mt-2 text-[11px] leading-snug text-[color:var(--muted)]'>Your order is saved and used first. Models without a key, without the needed skill, or out of quota are skipped automatically. You can also say it in chat: &ldquo;make Gemini 4 Hydrogen the primary lead orchestrator&rdquo;.</p>
+                  <p className='mt-2 text-[11px] leading-snug text-[color:var(--muted)]'>Your order and thinking levels are saved. Models without a key, without the needed skill, or out of quota are skipped automatically.</p>
                   <div className='mt-3 flex gap-2'>
                     <button className='neon-btn flex-1 rounded-xl py-2.5 text-sm' onClick={() => { actions.setAgent(id); router.push('/'); }}>Use in chat</button>
                     <button className='ghost-btn rounded-xl px-3.5 py-2.5 text-sm' disabled={settings.agent === id} onClick={() => setSetting('agent', id)}>{settings.agent === id ? 'Default' : 'Make default'}</button>

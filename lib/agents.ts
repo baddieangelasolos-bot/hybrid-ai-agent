@@ -199,3 +199,8 @@ export function effectiveChain(id: AgentId, override?: string[] | null): string[
   const head = override.filter((k, i) => MODEL_BY_KEY[k] && override.indexOf(k) === i);
   return [...head, ...base.filter((k) => !head.includes(k))];
 }
+
+/** Effort level for one agent, honouring user choice. */
+export function effectiveEffort(id: AgentId, override?: Effort | null): Effort {
+  return override || AGENTS[id].effort;
+}

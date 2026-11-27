@@ -1,5 +1,5 @@
 import { createAgentUIStreamResponse, type UIMessage } from 'ai';
-import { AGENTS, normalizeAgent, type AgentId } from '@/lib/agents';
+import { AGENTS, effectiveEffort, normalizeAgent, type AgentId, type Effort } from '@/lib/agents';
 import { requireAuth } from '@/lib/auth';
 import { resolvePermissions } from '@/lib/connectors/permissions';
 import { FailoverError, absorbClientCooldowns, classifyModelError, createFailoverModel, describeShort, getChain, type ModelNode } from '@/lib/failover';
@@ -28,6 +28,7 @@ interface Body {
   cooldowns?: unknown;
   profile?: unknown;
   chains?: Record<string, unknown>;
+  efforts?: Record<string, unknown>;
 }
 
 interface PartLike {
@@ -110,8 +111,11 @@ export async function POST(req: Request): Promise<Response> {
     wantMemoryTool: agentId === 'auto' && wantsMemoryTool(userText),
     profile: incognito ? '' : profileBlock(body.profile),
   });
-  const saved = body.chains && typeof body.chains === 'object' ? (body.chains as Record<string, unknown>)[agentId] : undefined;
-  const order = Array.isArray(saved) ? (saved as unknown[]).filter((k): k is string => typeof k === 'string' && k in MODEL_BY_KEY).slice(0, 20) : undefined;
+  const savedChain = body.chains && typeof body.chains === 'object' ? (body.chains as Record<string, unknown>)[agentId] : undefined;
+  const order = Array.isArray(savedChain) ? (savedChain as unknown[]).filter((k): k is string => typeof k === 'string' && k in MODEL_BY_KEY).slice(0, 20) : undefined;
+  
+  const savedEffort = body.efforts && typeof body.efforts === 'object' ? (body.efforts as Record<string, unknown>)[agentId] : undefined;
+  const effort = effectiveEffort(agentId, typeof savedEffort === 'string' ? (savedEffort as Effort) : null);
 
   const keepTools = plan.toolset.activeNames.length > 0;
   const history = prepareHistory(messages, { keepTools, maxMessages: agentId === 'auto' || agentId === 'quick' ? 10 : 24, maxChars: agentId === 'auto' || agentId === 'quick' ? 12000 : 120000 });
@@ -136,9 +140,9 @@ export async function POST(req: Request): Promise<Response> {
 
   const def = AGENTS[agentId];
   let answered: ModelNode | null = null;
-  const model = createFailoverModel(chain.nodes, { effort: def.effort, ttftMs: def.ttftMs, onModel: (n) => (answered = n) });
+  const model = createFailoverModel(chain.nodes, { effort, ttftMs: def.ttftMs, onModel: (n) => (answered = n) });
   const agent = instantiateAgent(plan, model);
-  console.log('[chat]', agentId, '~' + estTokens + ' tok', chain.nodes.map((n) => n.def.id).join(' > '));
+  console.log('[chat]', agentId, '~' + estTokens + ' tok', chain.nodes.map((n) => n.def.id).join(' > '), '(' + effort + ')');
 
   const run = (uiMessages: UIMessage[]) =>
     createAgentUIStreamResponse({
