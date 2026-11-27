@@ -282,9 +282,11 @@ function Composer() {
             </button>
           )}
         </div>
-        <p className='mt-1.5 text-center text-[11px] text-[color:var(--muted)]'>
-          {status === 'submitted' ? 'Routing your message...' : incognito ? 'Incognito: nothing here is saved on this device or in Drive.' : 'AI can make mistakes. Check important facts.'}
-        </p>
+        {(status === 'submitted' || incognito) && (
+          <p className='mt-1.5 text-center text-[11px] text-[color:var(--muted)]'>
+            {status === 'submitted' ? 'Routing your message...' : 'Incognito: nothing here is saved on this device or in Drive.'}
+          </p>
+        )}
       </div>
       {sheet && <AgentSheet onClose={() => setSheet(false)} />}
     </div>
