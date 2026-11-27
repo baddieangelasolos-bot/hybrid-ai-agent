@@ -694,7 +694,7 @@ export default function AppProviders({ children }: { children: ReactNode }) {
   const [facts, setFacts] = useState<MemoryFact[]>([]);
   const [profile, setProfileState] = useState<UserProfile>(DEFAULT_PROFILE);
   const profileTimer = useRef<number | undefined>(undefined);
-  const [drawer, setDrawer] = useState<{ open: boolean; notice: string | null }>({ open: false, notice: null });
+  const [drawer, setDrawer] = useState<{ open: boolean; notice: { type: 'ok' | 'error'; text: string } | null }>({ open: false, notice: null });
   const syncTimer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
@@ -743,8 +743,19 @@ export default function AppProviders({ children }: { children: ReactNode }) {
     void storage.load<Record<string, Permission>>('prefs/permissions').then((r) => r.value && setPermissions(r.value));
     void loadFacts().then(setFacts);
     const params = new URLSearchParams(window.location.search);
-    if (params.get('connector')) {
-      setDrawer({ open: true, notice: params.get('connector') === 'google_connected' ? 'Google Drive connected.' : 'Connector update: ' + params.get('connector') });
+    const conn = params.get('connector');
+    if (conn) {
+      const status = params.get('status');
+      const msg = (params.get('msg') ?? '').slice(0, 240);
+      let notice: { type: 'ok' | 'error'; text: string };
+      if (conn === 'google_connected' || (conn === 'google_drive' && status === 'ok')) {
+        notice = { type: 'ok', text: msg || 'Google Drive connected.' };
+      } else if (conn === 'google_drive') {
+        notice = { type: 'error', text: 'Google Drive was NOT connected. ' + (msg || 'Google gave no reason. Try Authorize again.') };
+      } else {
+        notice = { type: status === 'error' ? 'error' : 'ok', text: msg || 'Connector update: ' + conn };
+      }
+      setDrawer({ open: true, notice });
       window.history.replaceState(null, '', window.location.pathname);
     }
   }, [authed]);
@@ -793,7 +804,7 @@ export default function AppProviders({ children }: { children: ReactNode }) {
     await apiRequest('/api/auth', { method: 'DELETE' });
     window.location.href = '/';
   }, []);
-  const openConnectors = useCallback((notice?: string) => setDrawer({ open: true, notice: notice ?? null }), []);
+  const openConnectors = useCallback((notice?: string) => setDrawer({ open: true, notice: notice ? { type: 'ok', text: notice } : null }), []);
 
   const onPermissions = useCallback((next: Record<string, Permission>) => {
     setPermissions(next);
@@ -813,7 +824,7 @@ export default function AppProviders({ children }: { children: ReactNode }) {
       <ChatEngine facts={facts} addMemory={addMemory}>
         {children}
       </ChatEngine>
-      <ConnectorsDrawer open={drawer.open} onClose={() => setDrawer({ open: false, notice: null })} permissions={permissions} onPermissionsChange={onPermissions} initialNotice={drawer.notice ? { type: 'ok', text: drawer.notice } : undefined} />
+      <ConnectorsDrawer open={drawer.open} onClose={() => setDrawer({ open: false, notice: null })} permissions={permissions} onPermissionsChange={onPermissions} initialNotice={drawer.notice ?? undefined} />
       <div className='pointer-events-none fixed inset-x-0 z-[70] flex flex-col items-center gap-2 px-4' style={{ top: 'calc(env(safe-area-inset-top) + 68px)' }}>
         {notices.map((n) => (
           <div key={n.id} className='glass-strong pop-in pointer-events-auto max-w-md rounded-2xl px-4 py-2.5 text-sm' style={{ boxShadow: 'var(--shadow)' }}>

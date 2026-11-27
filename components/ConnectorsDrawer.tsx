@@ -339,6 +339,22 @@ export default function ConnectorsDrawer({ open, onClose, permissions, onPermiss
   );
 
   const googleReady = Boolean(env?.runtime.GOOGLE_CLIENT_ID && env?.runtime.GOOGLE_CLIENT_SECRET);
+  let googleOrigin = '';
+  try {
+    googleOrigin = env?.redirectUri ? new URL(env.redirectUri).origin : '';
+  } catch {
+    googleOrigin = '';
+  }
+  const googleValues = googleOrigin
+    ? [
+        { label: 'Authorised redirect URI (Clients page)', value: env?.redirectUri ?? '' },
+        { label: 'Authorised domain (Branding page)', value: googleOrigin.replace(/^https?:\/\//, '') },
+        { label: 'Application home page (Branding page)', value: googleOrigin },
+        { label: 'Privacy policy link (Branding page)', value: googleOrigin + '/privacy' },
+        { label: 'Terms of Service link (Branding page)', value: googleOrigin + '/terms' },
+      ]
+    : [{ label: 'Authorised redirect URI (Clients page)', value: env?.redirectUri ?? '...' }];
+  const googleHostMismatch = Boolean(googleOrigin) && typeof window !== 'undefined' && window.location.origin !== googleOrigin;
 
   return (
     <div className='fixed inset-0 z-50' role='dialog' aria-modal='true' aria-label='Connectors'>
@@ -512,13 +528,30 @@ export default function ConnectorsDrawer({ open, onClose, permissions, onPermiss
             {target.def.method === 'oauth-google' && (
               <div className='rounded-xl p-3 text-xs' style={{ border: '1px solid var(--line)', background: 'rgba(255,255,255,0.03)' }}>
                 <p className='mb-2 font-medium'>Authorize Google Drive</p>
-                <p className='mb-2 text-[color:var(--muted)]'>Add this redirect URI to your OAuth client in Google Cloud, then authorize. Only the &quot;drive.file&quot; permission is requested.</p>
-                <div className='mb-3 flex items-center gap-2'>
-                  <code className='flex-1 break-all rounded bg-black/40 px-2 py-1'>{env?.redirectUri ?? '...'}</code>
-                  <button type='button' className='ghost-btn rounded-lg p-1.5' onClick={() => copyText(env?.redirectUri ?? '')} aria-label='Copy redirect URI'>
-                    <Icon name='copy' size={13} />
-                  </button>
-                </div>
+                <p className='mb-2 text-[color:var(--muted)]'>
+                  Paste these exact values into Google Cloud (Google Auth Platform), then authorize. Only the &quot;drive.file&quot; permission is requested.
+                </p>
+                {googleValues.map((row) => (
+                  <div key={row.label} className='mb-2'>
+                    <p className='mb-0.5 text-[11px] text-[color:var(--muted)]'>{row.label}</p>
+                    <div className='flex items-center gap-2'>
+                      <code className='flex-1 break-all rounded bg-black/40 px-2 py-1'>{row.value}</code>
+                      <button type='button' className='ghost-btn rounded-lg p-1.5' onClick={() => copyText(row.value)} aria-label={'Copy ' + row.label}>
+                        <Icon name='copy' size={13} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {googleHostMismatch && (
+                  <p className='mb-2 rounded-lg px-2 py-1.5 text-amber-200' style={{ background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.3)' }}>
+                    You are on {window.location.origin}, but Google will send you back to {googleOrigin}. Open the app at {googleOrigin}, sign in there, then press Authorize.
+                  </p>
+                )}
+                <ol className='mb-3 list-decimal space-y-1 pl-4 text-[11px] text-[color:var(--muted)]'>
+                  <li>Clients page: set the redirect URI above and remove any old one.</li>
+                  <li>Branding page: set the authorised domain and the three links above, then Save.</li>
+                  <li>Audience page: while the status is Testing, add your own Gmail under Test users.</li>
+                </ol>
                 <button type='button' disabled={busy || !googleReady} onClick={() => void startGoogle()} className='neon-btn w-full rounded-lg px-3 py-2 text-xs'>
                   {googleReady ? 'Authorize with Google' : 'Save the Client ID and Secret first, then wait for the redeploy'}
                 </button>
