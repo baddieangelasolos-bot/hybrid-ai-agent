@@ -16,9 +16,11 @@ export class DriveError extends Error {
 
 const KEY_RE = /^[A-Za-z0-9._/-]{1,120}$/;
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
+const APP_TAG = 'hybrid-ai-agent';
 
 let cachedToken: { value: string; expires: number } | null = null;
 let cachedFolderId: string | null = null;
+const cachedSubfolders = new Map<string, string>();
 
 export function driveConfigured(): boolean {
   return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REFRESH_TOKEN);
@@ -30,12 +32,15 @@ export function assertKey(key: string): void {
   }
 }
 
-function fileName(key: string): string {
+/** Legacy flat filename for migration: "chat/123" -> "chat__123.json" */
+function legacyFileName(key: string): string {
   return key.replace(/\//g, '__') + '.json';
 }
 
-function keyFromName(name: string): string {
-  return name.replace(/\.json$/, '').replace(/__/g, '/');
+/** Clean filename for subfolders: "chat/123" -> "123.json" */
+function cleanFileName(key: string): string {
+  const parts = key.split('/');
+  return parts[parts.length - 1] + '.json';
 }
 
 async function timedFetch(url: string, init: RequestInit): Promise<Response> {
@@ -124,17 +129,84 @@ async function ensureFolder(): Promise<string> {
   return id;
 }
 
+async function ensureSubfolder(segments: string[], parentId: string): Promise<string> {
+  if (segments.length === 0) return parentId;
+  const pathKey = parentId + '/' + segments.join('/');
+  if (cachedSubfolders.has(pathKey)) return cachedSubfolders.get(pathKey)!;
+
+  let currentParentId = parentId;
+  for (let i = 0; i < segments.length; i++) {
+    const name = segments[i];
+    const subPathKey = parentId + '/' + segments.slice(0, i + 1).join('/');
+    if (cachedSubfolders.has(subPathKey)) {
+      currentParentId = cachedSubfolders.get(subPathKey)!;
+      continue;
+    }
+
+    const q = "name = '" + escapeQuery(name) + "' and '" + currentParentId + "' in parents and mimeType = '" + FOLDER_MIME + "' and trashed = false";
+    const res = await api('/files?q=' + encodeURIComponent(q) + '&fields=files(id)&pageSize=1');
+    const found = ((await res.json()) as { files?: { id: string }[] }).files?.[0];
+
+    if (found) {
+      currentParentId = found.id;
+    } else {
+      const created = await api('/files?fields=id', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, mimeType: FOLDER_MIME, parents: [currentParentId] }),
+      });
+      currentParentId = ((await created.json()) as { id: string }).id;
+    }
+    cachedSubfolders.set(subPathKey, currentParentId);
+  }
+  return currentParentId;
+}
+
 interface DriveFile {
   id: string;
   name: string;
   modifiedTime?: string;
   appProperties?: Record<string, string>;
+  parents?: string[];
 }
 
-async function findFile(key: string, folderId: string): Promise<DriveFile | null> {
-  const q = "name = '" + escapeQuery(fileName(key)) + "' and '" + folderId + "' in parents and trashed = false";
-  const res = await api('/files?q=' + encodeURIComponent(q) + '&fields=files(id,name,modifiedTime,appProperties)&pageSize=1');
-  return ((await res.json()) as { files?: DriveFile[] }).files?.[0] ?? null;
+/** Finds a file by key, checking subfolders first, then legacy flat names. */
+async function findFile(key: string, rootId: string): Promise<DriveFile | null> {
+  const parts = key.split('/');
+  const fileName = cleanFileName(key);
+  const folderPath = parts.slice(0, -1);
+  
+  // 1. Try nested path
+  if (folderPath.length > 0) {
+    const subFolderId = await ensureSubfolder(folderPath, rootId);
+    const q = "name = '" + escapeQuery(fileName) + "' and '" + subFolderId + "' in parents and trashed = false";
+    const res = await api('/files?q=' + encodeURIComponent(q) + '&fields=files(id,name,modifiedTime,appProperties,parents)&pageSize=1');
+    const found = ((await res.json()) as { files?: DriveFile[] }).files?.[0];
+    if (found) return found;
+  } else {
+    const q = "name = '" + escapeQuery(fileName) + "' and '" + rootId + "' in parents and trashed = false";
+    const res = await api('/files?q=' + encodeURIComponent(q) + '&fields=files(id,name,modifiedTime,appProperties,parents)&pageSize=1');
+    const found = ((await res.json()) as { files?: DriveFile[] }).files?.[0];
+    if (found) return found;
+  }
+
+  // 2. Try legacy flat name in root
+  const legacyQ = "name = '" + escapeQuery(legacyFileName(key)) + "' and '" + rootId + "' in parents and trashed = false";
+  const legacyRes = await api('/files?q=' + encodeURIComponent(legacyQ) + '&fields=files(id,name,modifiedTime,appProperties,parents)&pageSize=1');
+  const legacyFound = ((await legacyRes.json()) as { files?: DriveFile[] }).files?.[0];
+  
+  if (legacyFound) {
+    // Migration: move legacy file to correct subfolder and rename it
+    const subFolderId = await ensureSubfolder(folderPath, rootId);
+    await api('/files/' + legacyFound.id + '?addParents=' + subFolderId + '&removeParents=' + rootId, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: fileName }),
+    });
+    return { ...legacyFound, name: fileName, parents: [subFolderId] };
+  }
+
+  return null;
 }
 
 function multipart(metadata: object, content: string): { body: string; contentType: string } {
@@ -164,8 +236,8 @@ export async function driveHealth(): Promise<HealthInfo> {
 
 export async function driveGet(key: string): Promise<{ value: string; updatedAt: number }> {
   assertKey(key);
-  const folderId = await ensureFolder();
-  const file = await findFile(key, folderId);
+  const rootId = await ensureFolder();
+  const file = await findFile(key, rootId);
   if (!file) throw new DriveError('not-found', 'Not found in Google Drive.', 404);
   const res = await api('/files/' + file.id + '?alt=media');
   const updated = Number(file.appProperties?.updatedAt ?? Date.parse(file.modifiedTime ?? '') ?? 0);
@@ -175,14 +247,17 @@ export async function driveGet(key: string): Promise<{ value: string; updatedAt:
 export async function drivePut(key: string, value: string, updatedAt: number): Promise<void> {
   assertKey(key);
   const attempt = async (): Promise<void> => {
-    const folderId = await ensureFolder();
-    const existing = await findFile(key, folderId);
-    const props = { updatedAt: String(updatedAt) };
+    const rootId = await ensureFolder();
+    const existing = await findFile(key, rootId);
+    const props = { updatedAt: String(updatedAt), key, app: APP_TAG };
+    
     if (existing) {
       const m = multipart({ appProperties: props }, value);
       await api('/files/' + existing.id + '?uploadType=multipart&fields=id', { method: 'PATCH', headers: { 'Content-Type': m.contentType }, body: m.body }, true);
     } else {
-      const m = multipart({ name: fileName(key), parents: [folderId], mimeType: 'application/json', appProperties: props }, value);
+      const folderPath = key.split('/').slice(0, -1);
+      const parentId = await ensureSubfolder(folderPath, rootId);
+      const m = multipart({ name: cleanFileName(key), parents: [parentId], mimeType: 'application/json', appProperties: props }, value);
       await api('/files?uploadType=multipart&fields=id', { method: 'POST', headers: { 'Content-Type': m.contentType }, body: m.body }, true);
     }
   };
@@ -191,6 +266,7 @@ export async function drivePut(key: string, value: string, updatedAt: number): P
   } catch (e) {
     if (e instanceof DriveError && e.code === 'not-found') {
       cachedFolderId = null;
+      cachedSubfolders.clear();
       await attempt();
       return;
     }
@@ -200,18 +276,42 @@ export async function drivePut(key: string, value: string, updatedAt: number): P
 
 export async function driveDelete(key: string): Promise<void> {
   assertKey(key);
-  const folderId = await ensureFolder();
-  const file = await findFile(key, folderId);
+  const rootId = await ensureFolder();
+  const file = await findFile(key, rootId);
   if (!file) return;
   await api('/files/' + file.id, { method: 'DELETE' });
 }
 
 export async function driveList(prefix: string): Promise<{ key: string; updatedAt: number }[]> {
-  const folderId = await ensureFolder();
-  const q = "'" + folderId + "' in parents and trashed = false";
+  const rootId = await ensureFolder();
+  // Using appProperties to list across all subfolders reliably
+  const q = "appProperties has { key='app' and value='" + APP_TAG + "' } and trashed = false";
   const res = await api('/files?q=' + encodeURIComponent(q) + '&fields=files(name,modifiedTime,appProperties)&pageSize=1000');
   const files = ((await res.json()) as { files?: DriveFile[] }).files ?? [];
-  return files
-    .map((f) => ({ key: keyFromName(f.name), updatedAt: Number(f.appProperties?.updatedAt ?? Date.parse(f.modifiedTime ?? '') ?? 0) || 0 }))
-    .filter((f) => f.key.startsWith(prefix));
+  
+  const items = files.map((f) => {
+    // Priority: property key, or fallback to reconstructing key from name (less reliable for deep paths)
+    const key = f.appProperties?.key || f.name.replace(/\.json$/, ''); 
+    return {
+      key,
+      updatedAt: Number(f.appProperties?.updatedAt ?? Date.parse(f.modifiedTime ?? '') ?? 0) || 0,
+    };
+  });
+
+  // Also include legacy root files that haven't been migrated yet
+  const legacyQ = "'" + rootId + "' in parents and name contains '__' and name contains '.json' and trashed = false";
+  const legacyRes = await api('/files?q=' + encodeURIComponent(legacyQ) + '&fields=files(name,modifiedTime,appProperties)&pageSize=1000');
+  const legacyFiles = ((await legacyRes.json()) as { files?: DriveFile[] }).files ?? [];
+  
+  for (const f of legacyFiles) {
+    const key = f.name.replace(/\.json$/, '').replace(/__/g, '/');
+    if (!items.find(it => it.key === key)) {
+      items.push({
+        key,
+        updatedAt: Number(f.appProperties?.updatedAt ?? Date.parse(f.modifiedTime ?? '') ?? 0) || 0,
+      });
+    }
+  }
+
+  return items.filter((f) => f.key.startsWith(prefix));
 }
