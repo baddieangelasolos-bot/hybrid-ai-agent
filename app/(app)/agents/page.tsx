@@ -83,7 +83,7 @@ export default function AgentsPage() {
                       >
                         {EFFORTS.map(ev => <option key={ev} value={ev}>{ev}</option>)}
                       </select>
-                      {customEffort && <button className='ml-1 text-[color:var(--accent)]' onClick={() => resetEffort(id)} aria-label='Reset effort'><Icon name='cross' size={12} /></button>}
+                      {customEffort && <button className='ml-1 text-[color:var(--accent)]' onClick={() => resetEffort(id)} aria-label='Reset effort'><Icon name='x' size={12} /></button>}
                     </div>
                     <span className='chip'>fails over after {Math.round(a.ttftMs / 1000)}s</span>
                     {a.tools.map((t) => <span key={t} className='chip'>{TOOL_LABEL[t]}</span>)}
