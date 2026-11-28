@@ -330,7 +330,6 @@ function MessageView({ message, isLast, busy }: { message: UIMessage; isLast: bo
 
   return (
     <div className='fade-up agent-rail' style={{ ['--rail' as string]: agent?.hue ?? 'var(--accent)' }}>
-      {settings.showTrace && traceParts.length > 0 && <AgentTraceAccordion parts={traceParts} />}
       {pendingApprovals.length > 0 && (
         <div className='my-1.5 flex items-center gap-2 rounded-xl px-3 py-2 text-xs' style={{ background: 'color-mix(in srgb, var(--warn) 12%, transparent)', color: 'var(--ink)' }}>
           <span style={{ color: 'var(--warn)' }}><Icon name='lock' size={14} /></span>
@@ -341,6 +340,11 @@ function MessageView({ message, isLast, busy }: { message: UIMessage; isLast: bo
       {empty && streamingThis && (
         <div className='flex items-center gap-1.5 py-2'>
           <span className='dot' /><span className='dot' /><span className='dot' />
+        </div>
+      )}
+      {settings.showTrace && traceParts.length > 0 && (
+        <div className='mt-2'>
+          <AgentTraceAccordion parts={traceParts} />
         </div>
       )}
       {settings.showRoute && (meta.agentName || meta.model) && (
