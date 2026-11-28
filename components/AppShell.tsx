@@ -1,11 +1,11 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import ApprovalModal from './ApprovalModal';
-import { useApp } from './AppProviders';
+import { useApp, useChatActions, useChatMeta } from './AppProviders';
 import { Icon, type IconName } from './Icons';
 import Logo from './Logo';
 import StorageBanner from './StorageBanner';
@@ -27,6 +27,157 @@ export function NavButton() {
     <button className='icon-btn flex-none' aria-label='Open menu' onClick={open}>
       <Icon name='menu' size={22} />
     </button>
+  );
+}
+
+const MENU_W = 176;
+const MENU_H = 150;
+
+/** Recent chats like the Claude app: plain titles, a pencil per chat, "See all...". */
+function ChatList({ onNavigate }: { onNavigate: () => void }) {
+  const { threads, threadId } = useChatMeta();
+  const actions = useChatActions();
+  const router = useRouter();
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number; confirm: boolean } | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
+
+  const sorted = useMemo(() => [...threads].sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.updatedAt - a.updatedAt), [threads]);
+  const shown = sorted.slice(0, 7);
+  const target = menu ? threads.find((t) => t.id === menu.id) : undefined;
+
+  async function open(id: string) {
+    await actions.openThread(id);
+    router.push('/');
+    onNavigate();
+  }
+
+  function openMenu(id: string, el: HTMLElement) {
+    const r = el.getBoundingClientRect();
+    const x = Math.min(Math.max(8, r.right - MENU_W), window.innerWidth - MENU_W - 8);
+    const below = r.bottom + 4;
+    const y = below + MENU_H > window.innerHeight ? Math.max(8, r.top - MENU_H - 4) : below;
+    setMenu({ id, x, y, confirm: false });
+  }
+
+  function commitRename(id: string) {
+    const v = draft.trim();
+    setRenaming(null);
+    if (v) void actions.renameThread(id, v);
+  }
+
+  const itemCls = 'flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-[14px] transition hover:bg-white/5';
+
+  return (
+    <div className='mt-3 px-2'>
+      <div className='mb-1 px-2 text-[15px] font-semibold'>Chats</div>
+      {shown.length === 0 && <p className='px-2 py-3 text-sm text-[color:var(--muted)]'>No saved chats yet. Start talking and they will appear here.</p>}
+      {shown.map((t) => {
+        const active = t.id === threadId;
+        return (
+          <div key={t.id} className='group flex items-center gap-1 rounded-xl' style={active ? { background: 'color-mix(in srgb, var(--accent) 14%, transparent)' } : undefined}>
+            {renaming === t.id ? (
+              <div className='flex min-w-0 flex-1 items-center gap-1 px-2 py-1.5'>
+                <input
+                  autoFocus
+                  className='field !py-1.5 text-[15px]'
+                  value={draft}
+                  maxLength={60}
+                  aria-label='Chat name'
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') commitRename(t.id);
+                    if (e.key === 'Escape') setRenaming(null);
+                  }}
+                />
+                <button className='icon-btn !h-8 !w-8 flex-none' aria-label='Save name' onClick={() => commitRename(t.id)}>
+                  <Icon name='check' size={16} />
+                </button>
+                <button className='icon-btn !h-8 !w-8 flex-none' aria-label='Cancel rename' onClick={() => setRenaming(null)}>
+                  <Icon name='x' size={16} />
+                </button>
+              </div>
+            ) : (
+              <>
+                <button className='flex min-w-0 flex-1 items-center gap-2 px-2 py-3 text-left' onClick={() => void open(t.id)} aria-current={active ? 'true' : undefined}>
+                  {t.pinned && (
+                    <span className='flex-none text-[color:var(--muted)]'>
+                      <Icon name='pin' size={12} />
+                    </span>
+                  )}
+                  <span className='truncate text-[16px] leading-snug' style={{ color: active ? 'var(--ink)' : 'color-mix(in srgb, var(--ink) 88%, transparent)' }}>
+                    {t.title}
+                  </span>
+                </button>
+                <button className='icon-btn !h-8 !w-8 flex-none' aria-label={'Options for ' + t.title} aria-haspopup='menu' onClick={(e) => openMenu(t.id, e.currentTarget)}>
+                  <Icon name='edit' size={15} />
+                </button>
+              </>
+            )}
+          </div>
+        );
+      })}
+      <Link href='/history' prefetch onClick={onNavigate} className='block px-2 py-3 text-[15px] text-[color:var(--muted)]'>
+        See all...
+      </Link>
+
+      {menu &&
+        target &&
+        createPortal(
+          <div className='fixed inset-0 z-[68]' onClick={() => setMenu(null)}>
+            <div className='glass-strong pop-in absolute rounded-2xl p-1.5' role='menu' style={{ left: menu.x, top: menu.y, width: MENU_W, boxShadow: 'var(--shadow)' }} onClick={(e) => e.stopPropagation()}>
+              {menu.confirm ? (
+                <div className='p-2'>
+                  <p className='mb-2 text-[13px]'>Delete this chat for good?</p>
+                  <div className='flex gap-2'>
+                    <button className='ghost-btn flex-1 rounded-lg py-2 text-[13px]' onClick={() => setMenu(null)}>
+                      Cancel
+                    </button>
+                    <button
+                      className='flex-1 rounded-lg py-2 text-[13px] font-medium'
+                      style={{ background: 'color-mix(in srgb, var(--bad) 22%, transparent)', color: 'var(--bad)' }}
+                      onClick={() => {
+                        void actions.deleteThread(menu.id);
+                        setMenu(null);
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <button
+                    role='menuitem'
+                    className={itemCls}
+                    onClick={() => {
+                      setDraft(target.title);
+                      setRenaming(menu.id);
+                      setMenu(null);
+                    }}
+                  >
+                    <Icon name='pen' size={16} /> Rename
+                  </button>
+                  <button
+                    role='menuitem'
+                    className={itemCls}
+                    onClick={() => {
+                      void actions.pinThread(menu.id);
+                      setMenu(null);
+                    }}
+                  >
+                    <Icon name='pin' size={16} /> {target.pinned ? 'Unpin' : 'Pin'}
+                  </button>
+                  <button role='menuitem' className={itemCls} style={{ color: 'var(--bad)' }} onClick={() => setMenu({ ...menu, confirm: true })}>
+                    <Icon name='trash' size={16} /> Delete chat
+                  </button>
+                </>
+              )}
+            </div>
+          </div>,
+          document.body,
+        )}
+    </div>
   );
 }
 
@@ -77,6 +228,7 @@ function NavDrawer({ onClose }: { onClose: () => void }) {
               </Link>
             );
           })}
+          <ChatList onNavigate={onClose} />
         </div>
         <div className='px-3 pb-4'>
           <button

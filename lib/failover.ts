@@ -399,7 +399,7 @@ async function openStream(model: AnyModel, options: Record<string, unknown>, ttf
         return reader.cancel(reason);
       },
     });
-    return { ...res, stream };
+    return { ...res, stream, abort: (reason?: unknown) => ac.abort(reason) };
   } catch (e) {
     clearTimeout(timer);
     if (ac.signal.aborted && !outer?.aborted) {
@@ -413,6 +413,8 @@ async function openStream(model: AnyModel, options: Record<string, unknown>, ttf
 export interface FailoverOptions {
   effort: Effort;
   ttftMs: number;
+  /** Silence allowed between chunks after the first one (default: the larger of 25 s and ttftMs). */
+  idleMs?: number;
   /** Called with the node that finally answered. */
   onModel?: (node: ModelNode) => void;
 }
@@ -433,58 +435,137 @@ export function createFailoverModel(nodes: ModelNode[], opts: FailoverOptions): 
     return { ...options, providerOptions, maxOutputTokens: Math.min(cap ?? node.def.maxOut, node.def.maxOut) };
   };
 
+  const idleMs = opts.idleMs ?? Math.max(25_000, opts.ttftMs);
+
   /**
-   * If a model fails AFTER it already started a plain-text answer (for example "provider overloaded"
-   * halfway through 40 quiz questions), the next healthy model continues exactly where it stopped,
-   * so the user sees one unbroken answer instead of an error card.
+   * Keeps one unbroken answer when a model dies half way. Three situations are recovered:
+   *  1. it fails AFTER writing some text: the next healthy model continues exactly where it stopped;
+   *  2. it fails while only THINKING (no text, no tool call yet): the next healthy model restarts the
+   *     request from the original prompt (the half-finished thinking is closed first);
+   *  3. it goes silent for too long, or the connection closes without a finish signal: treated as a failure.
    */
   const guardStream = (first: { stream: ReadableStream<StreamPart> } & Record<string, unknown>, startIdx: number, options: Record<string, unknown>) => {
     const outer = options.abortSignal as AbortSignal | undefined;
     let text = '';
     let textId = 'text-0';
     let sawTool = false;
+    let sawFinish = false;
+    let sawFile = false;
+    let failed = false;
     let current = startIdx;
     let continued = false;
+    let restarted = false;
+    let active = first as { stream: ReadableStream<StreamPart>; abort?: (reason?: unknown) => void };
     let reader = first.stream.getReader();
+    const openReasoning = new Set<string>();
+
+    const readWithIdle = async (): Promise<ReadableStreamReadResult<StreamPart>> => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const idle = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          const err = new Error('No output for ' + Math.round(idleMs / 1000) + 's while answering');
+          err.name = 'AttemptTimeout';
+          reject(err);
+        }, idleMs);
+      });
+      try {
+        return await Promise.race([reader.read(), idle]);
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+
+    /** Moves to the next healthy model. Returns false when none could take over. */
+    const recover = async (error: unknown, mode: 'continue' | 'restart'): Promise<boolean> => {
+      markFailure(nodes[current].key, classifyModelError(error));
+      try {
+        active.abort?.(error);
+      } catch {
+        /* already closed */
+      }
+      void reader.cancel().catch(() => undefined);
+      for (let j = current + 1; j < models.length; j++) {
+        if (cooldownRemaining(nodes[j].key) > 0) continue;
+        try {
+          const base = buildOptions(nodes[j], options);
+          const callOptions =
+            mode === 'continue'
+              ? {
+                  ...base,
+                  prompt: [
+                    ...((options.prompt as unknown[]) ?? []),
+                    { role: 'assistant', content: [{ type: 'text', text }] },
+                    { role: 'user', content: [{ type: 'text', text: 'Continue your previous answer exactly where it stopped. Do not repeat or summarize anything you already wrote.' }] },
+                  ],
+                }
+              : base;
+          const next = await openStream(models[j], callOptions, opts.ttftMs, outer);
+          reader = next.stream.getReader();
+          active = next as typeof active;
+          current = j;
+          if (mode === 'continue') continued = true;
+          else restarted = true;
+          opts.onModel?.(nodes[j]);
+          return true;
+        } catch (e2) {
+          markFailure(nodes[j].key, classifyModelError(e2));
+        }
+      }
+      return false;
+    };
+
     const stream = new ReadableStream<StreamPart>({
       async pull(controller) {
+        if (failed) {
+          controller.close();
+          return;
+        }
         for (;;) {
           let part: StreamPart;
+          let synthetic = false;
           try {
-            const r = await reader.read();
+            const r = await readWithIdle();
             if (r.done) {
-              controller.close();
-              return;
+              if (sawFinish || sawTool || outer?.aborted) {
+                controller.close();
+                return;
+              }
+              const err = new Error('Network stream closed before the model finished');
+              err.name = 'PrematureClose';
+              part = { type: 'error', error: err };
+              synthetic = true;
+            } else {
+              part = r.value;
             }
-            part = r.value;
           } catch (e) {
             part = { type: 'error', error: e };
+            synthetic = true;
+          }
+          // A finish with no text, no tool call and no file is a silent failure (for example it only "thought").
+          if (part.type === 'finish' && text.length === 0 && !sawTool && !sawFile && !outer?.aborted) {
+            const err = new Error('The model finished without writing an answer');
+            err.name = 'EmptyResponse';
+            part = { type: 'error', error: err };
+            synthetic = true;
           }
           const type = String(part.type);
-          if (type === 'error' && text.length > 0 && !sawTool && !outer?.aborted) {
-            markFailure(nodes[current].key, classifyModelError(part.error));
-            let resumed = false;
-            for (let j = current + 1; j < models.length && !resumed; j++) {
-              if (cooldownRemaining(nodes[j].key) > 0) continue;
-              try {
-                const prompt = [
-                  ...((options.prompt as unknown[]) ?? []),
-                  { role: 'assistant', content: [{ type: 'text', text }] },
-                  { role: 'user', content: [{ type: 'text', text: 'Continue your previous answer exactly where it stopped. Do not repeat or summarize anything you already wrote.' }] },
-                ];
-                const next = await openStream(models[j], { ...buildOptions(nodes[j], options), prompt }, opts.ttftMs, outer);
-                reader = next.stream.getReader();
-                current = j;
-                continued = true;
-                opts.onModel?.(nodes[j]);
-                resumed = true;
-              } catch (e2) {
-                markFailure(nodes[j].key, classifyModelError(e2));
+          if (type === 'error' && !sawTool && !outer?.aborted) {
+            const mode = text.length > 0 ? 'continue' : 'restart';
+            if (await recover(part.error, mode)) {
+              if (mode === 'restart') {
+                for (const id of openReasoning) controller.enqueue({ type: 'reasoning-end', id } as StreamPart);
+                openReasoning.clear();
               }
+              continue;
             }
-            if (resumed) continue;
           }
-          if (continued && (type === 'stream-start' || type === 'response-metadata' || type === 'text-start')) continue;
+          if (type === 'error' && synthetic) failed = true;
+          if ((continued || restarted) && (type === 'stream-start' || type === 'response-metadata')) continue;
+          if (continued && type === 'text-start') continue;
+          if (type === 'finish') sawFinish = true;
+          if (type === 'file') sawFile = true;
+          if (type === 'reasoning-start') openReasoning.add(String(part.id ?? 'reasoning-0'));
+          if (type === 'reasoning-end') openReasoning.delete(String(part.id ?? 'reasoning-0'));
           if (type === 'text-start') textId = String(part.id ?? textId);
           if (type === 'text-delta') text += String(part.delta ?? part.textDelta ?? '');
           if (type === 'tool-input-start' || type === 'tool-call') sawTool = true;
@@ -494,6 +575,11 @@ export function createFailoverModel(nodes: ModelNode[], opts: FailoverOptions): 
         }
       },
       cancel(reason) {
+        try {
+          active.abort?.(reason);
+        } catch {
+          /* already closed */
+        }
         return reader.cancel(reason);
       },
     });

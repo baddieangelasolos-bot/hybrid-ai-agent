@@ -1,6 +1,7 @@
 import { ToolLoopAgent, isStepCount } from 'ai';
 import type { LanguageModel } from 'ai';
 import { AGENTS, type AgentId } from './agents';
+import { capabilityBlock } from './capabilities';
 import { getPersonaOverlay } from './personas';
 import type { AgentSkill } from './skills';
 import { buildToolsFor, type Toolset } from './tools';
@@ -33,6 +34,7 @@ export function planAgent(input: PlanInput): AgentPlan {
   const def = AGENTS[input.agent];
   const toolset = buildToolsFor(def.tools, input.permissions, { memory: input.wantMemoryTool && !input.incognito });
   const parts = [def.prompt, 'Today is ' + new Date().toISOString().slice(0, 10) + '.', 'Style: ' + getPersonaOverlay(input.persona)];
+  parts.push(capabilityBlock(input.agent, toolset, input.permissions));
   if (toolset.activeNames.length > 0) parts.push(SAFETY, 'Tools this turn: ' + toolset.activeNames.join(', ') + '. Use saveMemoryFact only for durable user facts.');
   if (input.skill) parts.push(input.skill.prompt);
   if (input.profile && !input.incognito) parts.push('About the user (apply silently; do not recite it; the user can override it any time):\n' + input.profile);

@@ -217,7 +217,7 @@ function UserAttachments({ parts }: { parts: Part[] }) {
 /* --------------------------------- message -------------------------------- */
 
 function MessageView({ message, isLast, busy }: { message: UIMessage; isLast: boolean; busy: boolean }) {
-  const { settings } = useApp();
+  const { settings, notify } = useApp();
   const actions = useChatActions();
   const [menu, setMenu] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -243,15 +243,25 @@ function MessageView({ message, isLast, busy }: { message: UIMessage; isLast: bo
     });
   };
 
+  const speakingRef = useRef(false);
+  speakingRef.current = speaking;
+  useEffect(
+    () => () => {
+      if (speakingRef.current) stopSpeaking();
+    },
+    [],
+  );
+
   const read = () => {
     if (speaking) {
       stopSpeaking();
-      setSpeaking(false);
-    } else {
-      speak(text, settings.voiceLang);
-      setSpeaking(true);
-      setTimeout(() => setSpeaking(false), Math.min(120000, text.length * 90));
+      return;
     }
+    setSpeaking(true);
+    speak(text, settings.voiceLang, {
+      onEnd: () => setSpeaking(false),
+      onError: (m) => notify(m),
+    });
   };
 
   const items: MenuItem[] = isUser
@@ -320,16 +330,6 @@ function MessageView({ message, isLast, busy }: { message: UIMessage; isLast: bo
 
   return (
     <div className='fade-up agent-rail' style={{ ['--rail' as string]: agent?.hue ?? 'var(--accent)' }}>
-      {settings.showRoute && (meta.agentName || meta.model) && (
-        <div className='mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-[color:var(--muted)]'>
-          {agent && (
-            <span className='flex items-center gap-1 font-medium' style={{ color: agent.hue }}>
-              <Icon name={agent.icon} size={12} /> {agent.name}
-            </span>
-          )}
-          {meta.model && <span className='font-mono'>{meta.model.replace(/^(Gemini|Groq|OpenRouter) \/ /, '')}</span>}
-        </div>
-      )}
       {settings.showTrace && traceParts.length > 0 && <AgentTraceAccordion parts={traceParts} />}
       {pendingApprovals.length > 0 && (
         <div className='my-1.5 flex items-center gap-2 rounded-xl px-3 py-2 text-xs' style={{ background: 'color-mix(in srgb, var(--warn) 12%, transparent)', color: 'var(--ink)' }}>
@@ -343,11 +343,26 @@ function MessageView({ message, isLast, busy }: { message: UIMessage; isLast: bo
           <span className='dot' /><span className='dot' /><span className='dot' />
         </div>
       )}
+      {settings.showRoute && (meta.agentName || meta.model) && (
+        <div className='mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-[color:var(--muted)]'>
+          {agent && (
+            <span className='flex items-center gap-1 font-medium' style={{ color: agent.hue }}>
+              <Icon name={agent.icon} size={12} /> {agent.name}
+            </span>
+          )}
+          {meta.model && <span className='font-mono'>{meta.model.replace(/^(Gemini|Groq|OpenRouter) \/ /, '')}</span>}
+        </div>
+      )}
       {!streamingThis && (
         <div className='-ml-2 mt-1 flex items-center gap-0.5'>
           {text && (
             <button className='icon-btn !h-8 !w-8' aria-label='Copy' onClick={copy}>
               <Icon name={copied ? 'check' : 'copy'} size={16} />
+            </button>
+          )}
+          {text && (
+            <button className='icon-btn !h-8 !w-8' aria-label={speaking ? 'Stop reading' : 'Read aloud'} onClick={read}>
+              <Icon name={speaking ? 'stop' : 'speaker'} size={16} />
             </button>
           )}
           <button className='icon-btn !h-8 !w-8' aria-label='Retry' onClick={() => actions.retry(message.id)}>
